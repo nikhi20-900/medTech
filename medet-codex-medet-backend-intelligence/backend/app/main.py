@@ -1,5 +1,9 @@
 from __future__ import annotations
 
+import logging
+
+logging.basicConfig(level=logging.DEBUG, format="%(name)s | %(levelname)s | %(message)s")
+logging.getLogger("medet").setLevel(logging.DEBUG)
 from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse

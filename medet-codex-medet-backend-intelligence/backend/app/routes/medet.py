@@ -1,5 +1,5 @@
 from __future__ import annotations
-
+import ollama
 import asyncio
 import json
 from collections.abc import AsyncIterator
@@ -8,7 +8,7 @@ from uuid import uuid4
 from fastapi import APIRouter
 from fastapi.responses import StreamingResponse
 
-from backend.app.core.errors import MedetAPIError, MedetErrorCode
+from backend.app.core.errors import MedetAPIError, MedetErrorCode, OllamaUnavailableError
 from backend.app.schemas.medet_response import (
     MedetChatRequest,
     MedetErrorResponse,
@@ -183,24 +183,94 @@ async def _generate_ai_response(
     language: str,
     conversation_id: str,
 ) -> tuple[str, list[dict[str, str] | str]]:
-    """
-    Thin placeholder for existing Tavily/Ollama orchestration.
+    import logging
+    import traceback
 
-    In the full app, call the current Medet/Omnix generation service here and
-    return `(answer_text, sources)`.
-    """
+    logger = logging.getLogger("medet.ollama")
+
+    logger.info("🔥 _generate_ai_response called | conv=%s lang=%s type=%s",
+                conversation_id, language, input_type)
+
     del conversation_id
+
+    # --- Step 1: Build the prompt context and validate ---
     prompt_context = build_multilingual_prompt_context(
         message=message,
         language=language,
         input_type=input_type,
     )
 
-    # Existing Omnix/Ollama integration should pass `prompt_context.system_instruction`
-    # with `prompt_context.user_message` and keep returning `(answer_text, sources)`.
-    del prompt_context
-    return (get_followup_text(language), [])
+    logger.debug("system_instruction (%d chars): %.120s…",
+                 len(prompt_context.system_instruction),
+                 prompt_context.system_instruction)
+    logger.debug("user_message (%d chars): %.120s…",
+                 len(prompt_context.user_message),
+                 prompt_context.user_message)
 
+    if not prompt_context.system_instruction:
+        raise MedetAPIError(
+            MedetErrorCode.UPSTREAM_FAILURE,
+            "Prompt context has empty system_instruction.",
+            status_code=500,
+        )
+    if not prompt_context.user_message:
+        raise MedetAPIError(
+            MedetErrorCode.EMPTY_MESSAGE,
+            "Prompt context has empty user_message.",
+            status_code=400,
+        )
+
+    # --- Step 2: Call Ollama with proper error handling ---
+    messages = [
+        {"role": "system", "content": prompt_context.system_instruction},
+        {"role": "user", "content": prompt_context.user_message},
+    ]
+
+    try:
+        logger.info("Calling ollama.chat(model='qwen3:4b') …")
+        response = await asyncio.to_thread(
+            ollama.chat,
+            model="qwen3:4b",
+            messages=messages,
+        )
+        logger.info("Ollama response received (type=%s)", type(response).__name__)
+    except ConnectionError as exc:
+        logger.error("Ollama connection failed:\n%s", traceback.format_exc())
+        raise OllamaUnavailableError(
+            "Cannot reach Ollama. Is `ollama serve` running on localhost:11434?"
+        ) from exc
+    except Exception as exc:
+        logger.error("Ollama call failed:\n%s", traceback.format_exc())
+        raise OllamaUnavailableError(
+            f"Ollama error: {type(exc).__name__}: {exc}"
+        ) from exc
+
+    # --- Step 3: Extract the answer safely ---
+    try:
+        # Ollama SDK ≥0.4 returns a ChatResponse (Pydantic model with
+        # attribute access), but it also supports dict-style subscript
+        # via SubscriptableBaseModel.
+        answer = response["message"]["content"]
+    except (KeyError, TypeError, IndexError) as exc:
+        logger.error("Unexpected Ollama response structure: %s\n%s",
+                      response, traceback.format_exc())
+        raise MedetAPIError(
+            MedetErrorCode.UPSTREAM_FAILURE,
+            f"Unexpected Ollama response format: {type(response).__name__}",
+            status_code=502,
+        ) from exc
+
+    if not answer or not answer.strip():
+        logger.warning("Ollama returned an empty answer.")
+        raise MedetAPIError(
+            MedetErrorCode.UPSTREAM_FAILURE,
+            "Ollama returned an empty response.",
+            status_code=502,
+        )
+
+    logger.info("✅ Ollama answer (%d chars): %.80s…", len(answer), answer)
+    return (answer, [])
+    
 
 async def _stream_ai_response(
     message: str,
