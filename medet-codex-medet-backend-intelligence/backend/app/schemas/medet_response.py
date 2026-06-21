@@ -1,0 +1,146 @@
+from __future__ import annotations
+
+from typing import Any
+from uuid import uuid4
+
+from pydantic import BaseModel, Field, field_validator
+
+
+SUPPORTED_LANGUAGES = {"en", "hi", "bn", "ne", "ta", "kn"}
+DEFAULT_LANGUAGE = "en"
+SUPPORTED_INPUT_TYPES = {"text", "voice"}
+DEFAULT_INPUT_TYPE = "text"
+SUPPORTED_CARD_TYPES = {
+    "emergency",
+    "action",
+    "hydration",
+    "medication",
+    "doctor_visit",
+    "symptom_warning",
+    "nutrition",
+    "followup",
+}
+
+
+class MedetSource(BaseModel):
+    title: str | None = None
+    url: str | None = None
+    snippet: str | None = None
+    source_type: str = "tavily"
+
+
+class MedetVoiceMetadata(BaseModel):
+    interaction_mode: str = "voice_first"
+    speech_to_text_status: str = "not_required"
+    transcript: str | None = None
+    transcript_language: str | None = None
+    voice_locale: str | None = None
+    tts_text: str | None = None
+    audio_status: str = "not_generated"
+    audio_url: str | None = None
+
+
+class MedetCard(BaseModel):
+    type: str
+    title: str
+    content: str
+
+    @field_validator("type")
+    @classmethod
+    def card_type_must_be_supported(cls, value: str) -> str:
+        card_type = value.strip().lower()
+        if card_type not in SUPPORTED_CARD_TYPES:
+            supported = ", ".join(sorted(SUPPORTED_CARD_TYPES))
+            raise ValueError(f"Unsupported card type. Use one of: {supported}.")
+        return card_type
+
+
+class MedetResponse(BaseModel):
+    response: str
+    input_type: str = DEFAULT_INPUT_TYPE
+    language: str = DEFAULT_LANGUAGE
+    emergency: bool = False
+    severity: str = "low"
+    reason: str | None = None
+    medical_warning: bool = False
+    trust_level: str = "safe"
+    suggest_doctor: bool = False
+    cards: list[MedetCard] = Field(default_factory=list)
+    sources: list[MedetSource] = Field(default_factory=list)
+    conversation_id: str = Field(default_factory=lambda: str(uuid4()))
+    voice: MedetVoiceMetadata | None = None
+
+
+class MedetChatRequest(BaseModel):
+    message: str = Field(..., min_length=1, max_length=4000)
+    input_type: str = DEFAULT_INPUT_TYPE
+    language: str = DEFAULT_LANGUAGE
+    conversation_id: str | None = None
+    stream: bool = False
+
+    @field_validator("message")
+    @classmethod
+    def message_must_not_be_empty(cls, value: str) -> str:
+        cleaned = value.strip()
+        if not cleaned:
+            raise ValueError("Message cannot be empty.")
+        return cleaned
+
+    @field_validator("input_type")
+    @classmethod
+    def input_type_must_be_supported(cls, value: str | None) -> str:
+        input_type = (value or DEFAULT_INPUT_TYPE).strip().lower()
+        if input_type not in SUPPORTED_INPUT_TYPES:
+            supported = ", ".join(sorted(SUPPORTED_INPUT_TYPES))
+            raise ValueError(f"Unsupported input type. Use one of: {supported}.")
+        return input_type
+
+    @field_validator("language")
+    @classmethod
+    def language_must_be_supported(cls, value: str | None) -> str:
+        language = (value or DEFAULT_LANGUAGE).strip().lower()
+        if language not in SUPPORTED_LANGUAGES:
+            supported = ", ".join(sorted(SUPPORTED_LANGUAGES))
+            raise ValueError(f"Unsupported language. Use one of: {supported}.")
+        return language
+
+
+class MedetErrorDetail(BaseModel):
+    code: str
+    message: str
+    retryable: bool = False
+    field: str | None = None
+
+
+class MedetErrorResponse(BaseModel):
+    error: MedetErrorDetail
+    conversation_id: str | None = None
+
+
+def normalize_sources(sources: list[dict[str, Any] | str] | None) -> list[MedetSource]:
+    normalized: list[MedetSource] = []
+    for source in sources or []:
+        if isinstance(source, str):
+            normalized.append(MedetSource(title=source, snippet=source))
+            continue
+
+        normalized.append(
+            MedetSource(
+                title=_optional_str(source.get("title") or source.get("name")),
+                url=_optional_str(source.get("url") or source.get("link")),
+                snippet=_optional_str(
+                    source.get("snippet")
+                    or source.get("content")
+                    or source.get("description")
+                ),
+                source_type=_optional_str(source.get("source_type")) or "tavily",
+            )
+        )
+    return normalized
+
+
+def _optional_str(value: Any) -> str | None:
+    if value is None:
+        return None
+    text = str(value).strip()
+    return text or None
