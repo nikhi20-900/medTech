@@ -203,8 +203,22 @@ function apiUrl(path: string, options: { medet?: boolean } = {}) {
   return `${API_BASE_URL}${baseAlreadyIncludesPrefix ? "" : MEDET_API_PREFIX}${normalizedPath}`;
 }
 
+let cachedSession: AuthSession | null = null;
+let lastSessionString: string | null = null;
+
 export function getStoredSession() {
-  return readStorage<AuthSession | null>(SESSION_STORAGE_KEY, null);
+  if (typeof window === "undefined") return null;
+  try {
+    const value = localStorage.getItem(SESSION_STORAGE_KEY);
+    if (value === lastSessionString) {
+      return cachedSession;
+    }
+    lastSessionString = value;
+    cachedSession = value ? (JSON.parse(value) as AuthSession) : null;
+    return cachedSession;
+  } catch {
+    return null;
+  }
 }
 
 export function saveSession(session: AuthSession | null) {
