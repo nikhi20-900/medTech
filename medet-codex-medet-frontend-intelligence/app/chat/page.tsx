@@ -1,6 +1,6 @@
 "use client";
 
-import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
+import { FormEvent, useMemo, useRef, useState } from "react";
 import { motion } from "framer-motion";
 import {
   AlertTriangle,
@@ -22,14 +22,12 @@ import { useAuth } from "@/components/auth/AuthProvider";
 import { AppShell, PageTransition } from "@/components/layout";
 import { useLanguage } from "@/i18n/context";
 import { isEmergencyText, MedetCard, streamChatMessage } from "@/lib/api";
-
 declare global {
   interface Window {
-    SpeechRecognition?: any;
-    webkitSpeechRecognition?: any;
+    SpeechRecognition: any;
+    webkitSpeechRecognition: any;
   }
 }
-
 type ChatMessage = {
   id: number;
   role: "assistant" | "user";
@@ -65,91 +63,8 @@ export default function ChatPage() {
     },
   ]);
 
-  const recognitionRef = useRef<any>(null);
-
-  useEffect(() => {
-    return () => {
-      if (recognitionRef.current) {
-        recognitionRef.current.abort();
-      }
-    };
-  }, []);
-
-  const startListening = () => {
-    if (typeof window === "undefined") return;
-
-    const SpeechRecognition =
-      window.SpeechRecognition || window.webkitSpeechRecognition;
-
-    if (!SpeechRecognition) {
-      alert(
-        "Voice recognition is not supported in this browser. Please try Chrome, Edge, or Safari."
-      );
-      return;
-    }
-
-    if (!recognitionRef.current) {
-      const rec = new SpeechRecognition();
-      rec.continuous = false;
-      rec.interimResults = false;
-
-      rec.onstart = () => {
-        setIsListening(true);
-      };
-
-      rec.onresult = (event: any) => {
-        const transcript = event.results[0][0].transcript;
-        if (transcript) {
-          setInput(transcript);
-        }
-      };
-
-      rec.onerror = (event: any) => {
-        console.error("Speech recognition error", event.error);
-        setIsListening(false);
-      };
-
-      rec.onend = () => {
-        setIsListening(false);
-      };
-
-      recognitionRef.current = rec;
-    }
-
-    const langMap: Record<string, string> = {
-      en: "en-IN",
-      hi: "hi-IN",
-      bn: "bn-IN",
-    };
-    recognitionRef.current.lang = langMap[language] || "en-IN";
-
-    try {
-      recognitionRef.current.start();
-    } catch (err) {
-      console.error("Failed to start speech recognition", err);
-    }
-  };
-
-  const stopListening = () => {
-    if (recognitionRef.current) {
-      try {
-        recognitionRef.current.stop();
-      } catch (err) {
-        console.error("Failed to stop speech recognition", err);
-      }
-    }
-    setIsListening(false);
-  };
-
-  const toggleListening = () => {
-    if (isListening) {
-      stopListening();
-    } else {
-      startListening();
-    }
-  };
-
   const currentLanguage = useMemo(
+
     () => languages.find((item) => item.code === language),
     [language, languages]
   );
@@ -169,7 +84,7 @@ export default function ChatPage() {
       id: assistantId,
       role: "assistant",
       text: "",
-      emergency: false,
+      emergency: isEmergencyText(cleanText),
     };
 
     setMessages((current) => [...current, userMessage, assistantMessage]);
@@ -188,11 +103,11 @@ export default function ChatPage() {
             current.map((message) =>
               message.id === assistantId
                 ? {
-                    ...message,
-                    text: metadata.medet?.response || message.text,
-                    emergency: Boolean(metadata.medet?.emergency),
-                    cards: metadata.medet?.cards || [],
-                  }
+                  ...message,
+                  text: metadata.medet?.response || message.text,
+                  emergency: Boolean(metadata.medet?.emergency),
+                  cards: metadata.medet?.cards || [],
+                }
                 : message
             )
           );
@@ -211,11 +126,11 @@ export default function ChatPage() {
         current.map((message) =>
           message.id === assistantId && !message.text.trim()
             ? {
-                ...message,
-                text:
-                  "I could not reach the healthcare service just now. Please try again, and call emergency services immediately if symptoms feel urgent.",
-                emergency: true,
-              }
+              ...message,
+              text:
+                "I could not reach the healthcare service just now. Please try again, and call emergency services immediately if symptoms feel urgent.",
+              emergency: true,
+            }
             : message
         )
       );
@@ -271,13 +186,12 @@ export default function ChatPage() {
                     className={`flex ${message.role === "user" ? "justify-end" : "justify-start"}`}
                   >
                     <div
-                      className={`max-w-[88%] rounded-3xl px-4 py-3 text-base leading-relaxed sm:max-w-[72%] ${
-                        message.role === "user"
-                          ? "rounded-br-md bg-medet-primary text-white"
-                          : message.emergency
-                            ? "rounded-tl-md border border-red-200 bg-red-50 text-red-950"
-                            : "rounded-tl-md bg-slate-50 text-medet-text"
-                      }`}
+                      className={`max-w-[88%] rounded-3xl px-4 py-3 text-base leading-relaxed sm:max-w-[72%] ${message.role === "user"
+                        ? "rounded-br-md bg-medet-primary text-white"
+                        : message.emergency
+                          ? "rounded-tl-md border border-red-200 bg-red-50 text-red-950"
+                          : "rounded-tl-md bg-slate-50 text-medet-text"
+                        }`}
                     >
                       {message.emergency && (
                         <div className="mb-2 flex items-center gap-2 text-sm font-bold text-medet-emergency">
@@ -352,12 +266,11 @@ export default function ChatPage() {
                 <form onSubmit={handleSubmit} className="flex items-end gap-2">
                   <button
                     type="button"
-                    onClick={toggleListening}
-                    className={`flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl ${
-                      isListening
-                        ? "bg-medet-primary text-white medet-animate-pulse-soft"
-                        : "bg-medet-primary-light text-medet-primary"
-                    }`}
+                    onClick={() => setIsListening((value) => !value)}
+                    className={`flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl ${isListening
+                      ? "bg-medet-primary text-white medet-animate-pulse-soft"
+                      : "bg-medet-primary-light text-medet-primary"
+                      }`}
                     aria-label={t("chat.voiceInput")}
                     disabled={isStreaming}
                   >
@@ -370,14 +283,6 @@ export default function ChatPage() {
                     id="chat-input"
                     value={input}
                     onChange={(event) => setInput(event.target.value)}
-                    onKeyDown={(event) => {
-                      if (event.key === "Enter" && !event.shiftKey) {
-                        event.preventDefault();
-                        if (input.trim() && !isStreaming) {
-                          sendMessage(input);
-                        }
-                      }
-                    }}
                     rows={1}
                     placeholder={isListening ? t("chat.listening") : t("chat.placeholder")}
                     className="min-h-12 flex-1 resize-none rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-base text-medet-text outline-none transition focus:border-medet-primary focus:bg-white"
@@ -419,11 +324,10 @@ export default function ChatPage() {
                   {languages.map((item) => (
                     <div
                       key={item.code}
-                      className={`rounded-2xl border px-3 py-2 text-sm font-semibold ${
-                        item.code === language
-                          ? "border-medet-primary bg-medet-primary-light text-medet-primary"
-                          : "border-slate-200 bg-slate-50 text-medet-text"
-                      }`}
+                      className={`rounded-2xl border px-3 py-2 text-sm font-semibold ${item.code === language
+                        ? "border-medet-primary bg-medet-primary-light text-medet-primary"
+                        : "border-slate-200 bg-slate-50 text-medet-text"
+                        }`}
                     >
                       {item.nativeName}
                     </div>
