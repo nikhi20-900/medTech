@@ -7,7 +7,8 @@ from uuid import uuid4
 
 from fastapi import APIRouter
 from fastapi.responses import StreamingResponse
-
+from backend.app.services.symptom_classifier import classify_symptom
+from backend.app.services.followup_questions import get_followup_questions
 from backend.app.core.errors import MedetAPIError, MedetErrorCode, OllamaUnavailableError
 from backend.app.schemas.medet_response import (
     MedetChatRequest,
@@ -181,6 +182,7 @@ async def _generate_ai_response(
     message: str,
     input_type: str,
     language: str,
+
     conversation_id: str,
 ) -> tuple[str, list[dict[str, str] | str]]:
     import logging
@@ -200,9 +202,20 @@ async def _generate_ai_response(
         input_type=input_type,
     )
 
+    symptom = classify_symptom(message)
+    questions = get_followup_questions(symptom.name)
+    extra_context = (
+        f"\n\nDetected symptom category: {symptom.name}\n"
+        f"Severity: {symptom.severity}\n\n"
+        "Preferred follow-up questions:\n"
+        + "\n".join(f"* {q}" for q in questions)
+        + "\n\nUse these questions whenever information is missing."
+    )
+    system_instruction = f"{prompt_context.system_instruction}{extra_context}"
+
     logger.debug("system_instruction (%d chars): %.120s…",
-                 len(prompt_context.system_instruction),
-                 prompt_context.system_instruction)
+                 len(system_instruction),
+                 system_instruction)
     logger.debug("user_message (%d chars): %.120s…",
                  len(prompt_context.user_message),
                  prompt_context.user_message)
@@ -222,7 +235,7 @@ async def _generate_ai_response(
 
     # --- Step 2: Call Ollama with proper error handling ---
     messages = [
-        {"role": "system", "content": prompt_context.system_instruction},
+        {"role": "system", "content": system_instruction},
         {"role": "user", "content": prompt_context.user_message},
     ]
 
@@ -232,6 +245,10 @@ async def _generate_ai_response(
             ollama.chat,
             model="qwen3:4b",
             messages=messages,
+    options={
+        "temperature": 0.2,
+        "top_p": 0.8,
+        },
         )
         logger.info("Ollama response received (type=%s)", type(response).__name__)
     except ConnectionError as exc:

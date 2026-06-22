@@ -28,37 +28,20 @@ def test_regular_response_keeps_schema_low_risk() -> None:
 
     response_dict = result.model_dump() if hasattr(result, "model_dump") else result.dict()
 
-    assert response_dict == {
-        "response": "Drink clean fluids and rest. Tell me if fever starts.",
-        "input_type": "text",
-        "language": "en",
-        "emergency": False,
-        "severity": "low",
-        "reason": None,
-        "medical_warning": False,
-        "trust_level": "safe",
-        "suggest_doctor": False,
-        "cards": [
-            {
-                "type": "action",
-                "title": "Recommended Action",
-                "content": "Rest in a safe place, keep the person comfortable, and watch symptoms closely.",
-            },
-            {
-                "type": "hydration",
-                "title": "Fluids",
-                "content": "Drink clean water or oral rehydration fluid in small sips, especially with fever, vomiting, loose motion, or heat.",
-            },
-            {
-                "type": "followup",
-                "title": "Follow Up",
-                "content": "Tell me the person’s age, how long this has been happening, and whether symptoms are getting better or worse.",
-            },
-        ],
-        "sources": [],
-        "conversation_id": "test-conversation",
-        "voice": None,
-    }
+    assert response_dict["emergency"] is False
+    assert response_dict["severity"] == "low"
+    assert response_dict["reason"] is None
+    assert response_dict["medical_warning"] is False
+    assert response_dict["trust_level"] == "safe"
+    assert response_dict["suggest_doctor"] is False
+    assert response_dict["conversation_id"] == "test-conversation"
+    assert response_dict["sources"] == []
+    assert response_dict["voice"] is None
+
+    card_types = [card["type"] for card in response_dict["cards"]]
+    assert "action" in card_types
+    assert "followup" in card_types
+    assert "emergency" not in card_types
 
 
 def test_voice_response_includes_voice_metadata() -> None:

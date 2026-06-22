@@ -1,6 +1,6 @@
 "use client";
 
-import { FormEvent, useMemo, useRef, useState } from "react";
+import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import { motion } from "framer-motion";
 import {
   AlertTriangle,
@@ -22,6 +22,13 @@ import { useAuth } from "@/components/auth/AuthProvider";
 import { AppShell, PageTransition } from "@/components/layout";
 import { useLanguage } from "@/i18n/context";
 import { isEmergencyText, MedetCard, streamChatMessage } from "@/lib/api";
+
+declare global {
+  interface Window {
+    SpeechRecognition?: any;
+    webkitSpeechRecognition?: any;
+  }
+}
 
 type ChatMessage = {
   id: number;
@@ -58,6 +65,90 @@ export default function ChatPage() {
     },
   ]);
 
+  const recognitionRef = useRef<any>(null);
+
+  useEffect(() => {
+    return () => {
+      if (recognitionRef.current) {
+        recognitionRef.current.abort();
+      }
+    };
+  }, []);
+
+  const startListening = () => {
+    if (typeof window === "undefined") return;
+
+    const SpeechRecognition =
+      window.SpeechRecognition || window.webkitSpeechRecognition;
+
+    if (!SpeechRecognition) {
+      alert(
+        "Voice recognition is not supported in this browser. Please try Chrome, Edge, or Safari."
+      );
+      return;
+    }
+
+    if (!recognitionRef.current) {
+      const rec = new SpeechRecognition();
+      rec.continuous = false;
+      rec.interimResults = false;
+
+      rec.onstart = () => {
+        setIsListening(true);
+      };
+
+      rec.onresult = (event: any) => {
+        const transcript = event.results[0][0].transcript;
+        if (transcript) {
+          setInput(transcript);
+        }
+      };
+
+      rec.onerror = (event: any) => {
+        console.error("Speech recognition error", event.error);
+        setIsListening(false);
+      };
+
+      rec.onend = () => {
+        setIsListening(false);
+      };
+
+      recognitionRef.current = rec;
+    }
+
+    const langMap: Record<string, string> = {
+      en: "en-IN",
+      hi: "hi-IN",
+      bn: "bn-IN",
+    };
+    recognitionRef.current.lang = langMap[language] || "en-IN";
+
+    try {
+      recognitionRef.current.start();
+    } catch (err) {
+      console.error("Failed to start speech recognition", err);
+    }
+  };
+
+  const stopListening = () => {
+    if (recognitionRef.current) {
+      try {
+        recognitionRef.current.stop();
+      } catch (err) {
+        console.error("Failed to stop speech recognition", err);
+      }
+    }
+    setIsListening(false);
+  };
+
+  const toggleListening = () => {
+    if (isListening) {
+      stopListening();
+    } else {
+      startListening();
+    }
+  };
+
   const currentLanguage = useMemo(
     () => languages.find((item) => item.code === language),
     [language, languages]
@@ -78,7 +169,7 @@ export default function ChatPage() {
       id: assistantId,
       role: "assistant",
       text: "",
-      emergency: isEmergencyText(cleanText),
+      emergency: false,
     };
 
     setMessages((current) => [...current, userMessage, assistantMessage]);
@@ -261,7 +352,7 @@ export default function ChatPage() {
                 <form onSubmit={handleSubmit} className="flex items-end gap-2">
                   <button
                     type="button"
-                    onClick={() => setIsListening((value) => !value)}
+                    onClick={toggleListening}
                     className={`flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl ${
                       isListening
                         ? "bg-medet-primary text-white medet-animate-pulse-soft"
@@ -279,6 +370,14 @@ export default function ChatPage() {
                     id="chat-input"
                     value={input}
                     onChange={(event) => setInput(event.target.value)}
+                    onKeyDown={(event) => {
+                      if (event.key === "Enter" && !event.shiftKey) {
+                        event.preventDefault();
+                        if (input.trim() && !isStreaming) {
+                          sendMessage(input);
+                        }
+                      }
+                    }}
                     rows={1}
                     placeholder={isListening ? t("chat.listening") : t("chat.placeholder")}
                     className="min-h-12 flex-1 resize-none rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-base text-medet-text outline-none transition focus:border-medet-primary focus:bg-white"

@@ -129,7 +129,7 @@ export interface VoiceTranscription {
 }
 
 export function isEmergencyText(text: string) {
-  return /chest pain|breathing|breath|unconscious|stroke|bleeding|seizure|poison|burn|heart/i.test(
+  return /chest pain|cannot breathe|can't breathe|cant breathe|difficulty breathing|trouble breathing|shortness of breath|heavy bleeding|bleeding not stopping|severe bleeding|blood not stopping|unconscious|passed out|not waking|seizure|convulsion|stroke|face drooping|severe burn|heart attack|cold sweat/i.test(
     text
   );
 }

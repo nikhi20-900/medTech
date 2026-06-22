@@ -83,9 +83,10 @@ DANGEROUS_RULES: tuple[SafetyRule, ...] = (
 
 PROFESSIONAL_CARE_PATTERNS: tuple[re.Pattern[str], ...] = (
     _compile(r"\b(pregnant|pregnancy|baby|infant|elderly|old person|diabetes|high blood pressure)\b"),
-    _compile(r"\b(fever)\b.{0,30}\b(3 days|three days|high|very high|not going down)\b"),
-    _compile(r"\b(worse|worsening|severe|persistent|for many days|not improving)\b"),
-    _compile(r"\b(blood in stool|blood in urine|dehydration|unable to drink)\b"),
+    _compile(r"\b(fever)\b.{0,30}\b(3 days|three days|high|very high|not going down|39|40|103|104)\b"),
+    _compile(r"\b(high|very high)\s+(fever)\b"),
+    _compile(r"\b(worse|worsening|severe|persistent|not improving)\b.{0,40}\b(pain|fever|cough|vomiting|bleeding|headache|symptom|diarrhea|infection)\b"),
+    _compile(r"\b(blood in stool|blood in urine|dehydration|unable to drink|unable to eat)\b"),
 )
 
 

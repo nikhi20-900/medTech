@@ -14,6 +14,102 @@ from backend.app.services.language_support import get_doctor_suggestion_text
 from backend.app.services.medical_safety_guard import guard_medical_response
 from backend.app.services.voice_support import build_voice_metadata
 
+MEDICAL_KEYWORDS = {
+    # English symptoms
+    "fever",
+    "headache",
+    "pain",
+    "cough",
+    "vomiting",
+    "nausea",
+    "bleeding",
+    "injury",
+    "breathing",
+    "breathe",
+    "breathless",
+    "gasping",
+    "suffocating",
+    "doctor",
+    "medicine",
+    "hospital",
+    "symptom",
+    "sick",
+    "ill",
+    "weakness",
+    "chest",
+    "dizzy",
+    "diarrhea",
+    "infection",
+    "allergy",
+    "burn",
+    "seizure",
+    "convulsion",
+    "fits",
+    "stroke",
+    "unconscious",
+    "fainted",
+    "collapsed",
+    "pregnant",
+    "heart attack",
+    "dehydration",
+    "blood",
+    "urine",
+    "stool",
+    # Hindi / Romanized Hindi
+    "bukhar",
+    "dard",
+    "khoon",
+    "behosh",
+    "daura",
+    "saans",
+    "seene",
+    "chhati",
+    "बुखार",
+    "दर्द",
+    "खून",
+    "बेहोश",
+    "दौरा",
+    "सांस",
+    "छाती",
+    "लकवा",
+    "ज्वरो",
+    # Bengali
+    "জ্বর",
+    "ব্যথা",
+    "রক্ত",
+    "অজ্ঞান",
+    "খিঁচুনি",
+    "শ্বাস",
+    "বুকে",
+    # Tamil
+    "காய்ச்சல்",
+    "வலி",
+    "ரத்தம்",
+    "மயக்கம்",
+    "வலிப்பு",
+    "மூச்சு",
+    # Kannada
+    "ಜ್ವರ",
+    "ನೋವು",
+    "ರಕ್ತ",
+    "ಬೇಹೋಷ್",
+    "ಉಸಿರು",
+    # Nepali
+    "रगत",
+    "सास",
+}
+
+
+def is_medical_query(message: str | None) -> bool:
+    if not message:
+        return False
+
+    lowered = message.lower()
+    return any(
+        keyword in lowered
+        for keyword in MEDICAL_KEYWORDS
+    )
+
 
 def build_medet_response(
     ai_text: str,
@@ -26,15 +122,20 @@ def build_medet_response(
 ) -> MedetResponse:
     """
     Attach healthcare metadata to a Medet answer.
-
-    The emergency detector checks the user message first because escalation should
-    not depend on whether the model explicitly repeats a warning phrase.
     """
-    user_detection = detect_emergency(user_message)
-    answer_detection = detect_emergency(ai_text)
-    detection = user_detection if user_detection["emergency"] else answer_detection
+    medical_query = is_medical_query(user_message)
+
+    if medical_query:
+        detection = detect_emergency(user_message)
+    else:
+        detection = {
+            "emergency": False,
+            "severity": "low",
+            "reason": None,
+        }
 
     emergency = bool(detection["emergency"])
+
     safety = guard_medical_response(
         ai_text,
         user_message=user_message,
@@ -46,22 +147,35 @@ def build_medet_response(
     should_suggest_doctor = (
         emergency or safety.suggest_doctor
         if suggest_doctor is None
-        else bool(suggest_doctor or emergency or safety.suggest_doctor)
+        else bool(
+            suggest_doctor
+            or emergency
+            or safety.suggest_doctor
+        )
     )
+
+    if not medical_query:
+        emergency = False
+        should_suggest_doctor = False
 
     if suggest_doctor and not emergency:
-        final_text = _append_once(final_text, get_doctor_suggestion_text(language))
+        final_text = _append_once(
+            final_text,
+            get_doctor_suggestion_text(language),
+        )
 
-    cards = build_healthcare_cards(
-        response=final_text,
-        user_message=user_message,
-        emergency=emergency,
-        severity=str(detection["severity"]),
-        suggest_doctor=should_suggest_doctor,
-        medical_warning=safety.medical_warning,
-        trust_level=safety.trust_level,
-        language=language,
-    )
+    cards = []
+    if medical_query:
+        cards = build_healthcare_cards(
+            response=final_text,
+            user_message=user_message,
+            emergency=emergency,
+            severity=str(detection["severity"]),
+            suggest_doctor=should_suggest_doctor,
+            medical_warning=safety.medical_warning,
+            trust_level=safety.trust_level,
+            language=language,
+        )
 
     return MedetResponse(
         response=final_text,
@@ -69,7 +183,11 @@ def build_medet_response(
         language=language,
         emergency=emergency,
         severity=str(detection["severity"]),
-        reason=detection["reason"] if isinstance(detection["reason"], str) else None,
+        reason=(
+            detection["reason"]
+            if isinstance(detection["reason"], str)
+            else None
+        ),
         medical_warning=safety.medical_warning,
         trust_level=safety.trust_level,
         suggest_doctor=should_suggest_doctor,
@@ -81,13 +199,18 @@ def build_medet_response(
             transcript=user_message,
             response_text=final_text,
         ),
-        **({"conversation_id": conversation_id} if conversation_id else {}),
+        **(
+            {"conversation_id": conversation_id}
+            if conversation_id
+            else {}
+        ),
     )
 
 
 def _append_once(text: str, addition: str) -> str:
     if addition in text:
         return text
+
     if not text:
         return addition
     return f"{text}\n\n{addition}"

@@ -104,7 +104,7 @@ def build_healthcare_cards(
 ) -> list[MedetCard]:
     """Build lightweight UI cards from Medet response metadata and symptoms."""
     del trust_level
-    text = f"{user_message or ''} {response}".strip()
+    text = (user_message or "").strip()
     card_types: list[str] = []
 
     if emergency:
