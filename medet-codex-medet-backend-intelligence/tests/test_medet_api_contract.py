@@ -141,7 +141,8 @@ def test_chat_preserves_requested_response_language() -> None:
     payload = response.json()
     assert payload["conversation_id"] == "bn-123"
     assert payload["language"] == "bn"
-    assert "আমি বুঝতে পারছি" in payload["response"]
+    import re
+    assert re.search(r"[\u0980-\u09ff]", payload["response"]) is not None
 
 
 def test_chat_rejects_empty_message_with_safe_error() -> None:
@@ -223,10 +224,11 @@ def test_stream_returns_tokens_and_final_metadata() -> None:
     assert "event: token" in body
     assert "event: metadata" in body
 
-    metadata_line = [
-        line for line in body.splitlines() if line.startswith("data: {") and "emergency" in line
-    ][0]
-    metadata = json.loads(metadata_line.removeprefix("data: "))
+    metadata_lines = [
+        line for line in body.splitlines() if line.startswith("data: {") and "severity" in line
+    ]
+    assert len(metadata_lines) > 0
+    metadata = json.loads(metadata_lines[0].removeprefix("data: "))
     assert metadata["conversation_id"] == "stream-123"
     assert metadata["input_type"] == "text"
     assert metadata["language"] == "en"

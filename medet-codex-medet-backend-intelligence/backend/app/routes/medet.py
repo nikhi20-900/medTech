@@ -7,8 +7,9 @@ from uuid import uuid4
 
 from fastapi import APIRouter
 from fastapi.responses import StreamingResponse
+from backend.app.services.conversation_state import state_manager
 from backend.app.services.symptom_classifier import classify_symptom
-from backend.app.services.followup_questions import get_followup_questions
+from backend.app.services.triage_prompt_builder import build_stateful_triage_prompt
 from backend.app.core.errors import MedetAPIError, MedetErrorCode, OllamaUnavailableError
 from backend.app.schemas.medet_response import (
     MedetChatRequest,
@@ -193,8 +194,6 @@ async def _generate_ai_response(
     logger.info("🔥 _generate_ai_response called | conv=%s lang=%s type=%s",
                 conversation_id, language, input_type)
 
-    del conversation_id
-
     # --- Step 1: Build the prompt context and validate ---
     prompt_context = build_multilingual_prompt_context(
         message=message,
@@ -203,14 +202,8 @@ async def _generate_ai_response(
     )
 
     symptom = classify_symptom(message)
-    questions = get_followup_questions(symptom.name)
-    extra_context = (
-        f"\n\nDetected symptom category: {symptom.name}\n"
-        f"Severity: {symptom.severity}\n\n"
-        "Preferred follow-up questions:\n"
-        + "\n".join(f"* {q}" for q in questions)
-        + "\n\nUse these questions whenever information is missing."
-    )
+    state = state_manager.update(conversation_id, message, symptom)
+    extra_context = build_stateful_triage_prompt(state)
     system_instruction = f"{prompt_context.system_instruction}{extra_context}"
 
     logger.debug("system_instruction (%d chars): %.120s…",
