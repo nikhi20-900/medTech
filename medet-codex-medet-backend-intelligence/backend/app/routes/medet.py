@@ -9,7 +9,8 @@ from fastapi import APIRouter
 from fastapi.responses import StreamingResponse
 from backend.app.services.conversation_state import state_manager
 from backend.app.services.symptom_classifier import classify_symptom
-from backend.app.services.triage_prompt_builder import build_stateful_triage_prompt
+from backend.app.services.response_policy_rules import determine_response_policy
+from backend.app.services.triage_prompt_builder import build_policy_aware_prompt
 from backend.app.core.errors import MedetAPIError, MedetErrorCode, OllamaUnavailableError
 from backend.app.schemas.medet_response import (
     MedetChatRequest,
@@ -203,7 +204,13 @@ async def _generate_ai_response(
 
     symptom = classify_symptom(message)
     state = state_manager.update(conversation_id, message, symptom)
-    extra_context = build_stateful_triage_prompt(state)
+    policy_ctx = determine_response_policy(state)
+    logger.info(
+        "response_policy | conv=%s policy=%s max_q=%d self_care=%s",
+        conversation_id, policy_ctx.policy.value,
+        policy_ctx.max_questions, policy_ctx.allow_self_care,
+    )
+    extra_context = build_policy_aware_prompt(state, policy_ctx)
     system_instruction = f"{prompt_context.system_instruction}{extra_context}"
 
     logger.debug("system_instruction (%d chars): %.120s…",
