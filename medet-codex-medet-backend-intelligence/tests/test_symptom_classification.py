@@ -113,6 +113,31 @@ class TestSymptomExtraction:
         result = extract_symptoms("I have a headache")
         assert result.emergency_candidate is False
 
+    def test_negated_chest_pain_not_emergency_candidate(self) -> None:
+        """Negated 'chest pain' must NOT set emergency_candidate."""
+        result = extract_symptoms("I don't have chest pain")
+        assert result.emergency_candidate is False
+
+    def test_negated_trouble_breathing_not_emergency_candidate(self) -> None:
+        """Negated 'trouble breathing' must NOT set emergency_candidate."""
+        result = extract_symptoms("no trouble breathing at all")
+        assert result.emergency_candidate is False
+
+    def test_full_bug_report_not_emergency_candidate(self) -> None:
+        """The exact bug-report input must NOT set emergency_candidate."""
+        result = extract_symptoms(
+            "I've had these symptoms for 3 days. My temperature is 101.4°F. "
+            "The cough is dry. The body pain is moderate. I don't have chest "
+            "pain or trouble breathing. I took paracetamol this morning, but "
+            "the fever keeps coming back."
+        )
+        assert result.emergency_candidate is False
+
+    def test_non_negated_chest_pain_still_emergency_candidate(self) -> None:
+        """Sanity check: actual 'chest pain' must still flag candidate."""
+        result = extract_symptoms("I have chest pain")
+        assert result.emergency_candidate is True
+
 
 # ===================================================================
 # UNIT TESTS — Severity Detection

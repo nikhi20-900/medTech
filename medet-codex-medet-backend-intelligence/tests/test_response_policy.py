@@ -303,3 +303,56 @@ class TestEdgeCases:
         result = determine_response_policy(state)
         with pytest.raises(AttributeError):
             result.max_questions = 99  # type: ignore[misc]
+
+
+# ===================================================================
+# Negated emergency — end-to-end regression tests
+# ===================================================================
+
+
+class TestNegatedEmergencyRegression:
+    """Ensure negated emergency symptoms never produce EMERGENCY policy.
+
+    This is the end-to-end regression test for the false-escalation bug
+    where 'I don't have chest pain' was incorrectly routed to EMERGENCY.
+    """
+
+    def test_bug_report_input_not_emergency(self) -> None:
+        """The exact bug-report input must NOT produce EMERGENCY policy."""
+        state = _make_state(
+            emergency_candidate=False,
+            severity="low",
+        )
+        result = determine_response_policy(state)
+        assert result.policy != ResponsePolicy.EMERGENCY
+
+    def test_full_pipeline_bug_report(self) -> None:
+        """Full pipeline: classify_symptom → state → policy for bug input."""
+        from backend.app.services.symptom_classifier import classify_symptom
+
+        triage = classify_symptom(
+            "I've had these symptoms for 3 days. My temperature is 101.4°F. "
+            "The cough is dry. The body pain is moderate. I don't have chest "
+            "pain or trouble breathing. I took paracetamol this morning, but "
+            "the fever keeps coming back."
+        )
+        assert triage.emergency_candidate is False
+
+        state = ConversationState(
+            conversation_id="regression-test",
+            triage=triage,
+        )
+        result = determine_response_policy(state)
+        assert result.policy != ResponsePolicy.EMERGENCY
+
+    def test_negated_candidate_false_yields_non_emergency(self) -> None:
+        """emergency_candidate=False must never produce EMERGENCY policy."""
+        state = _make_state(
+            emergency_candidate=False,
+            severity="high",
+            stage=ConversationStage.COLLECTING,
+        )
+        result = determine_response_policy(state)
+        # severity=high → URGENT, not EMERGENCY
+        assert result.policy == ResponsePolicy.URGENT
+

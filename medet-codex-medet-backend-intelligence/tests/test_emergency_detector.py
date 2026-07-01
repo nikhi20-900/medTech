@@ -75,3 +75,65 @@ def test_detects_kannada_severe_burn() -> None:
 
     assert result["emergency"] is True
     assert result["reason"] == "Possible severe burn detected"
+
+
+# ===================================================================
+# Negated emergency symptoms — regression tests for false positives
+# ===================================================================
+
+
+def test_negated_dont_have_chest_pain() -> None:
+    """'don't have chest pain' must NOT trigger emergency."""
+    result = detect_emergency("I don't have chest pain or trouble breathing")
+    assert result["emergency"] is False
+
+
+def test_negated_no_chest_pain() -> None:
+    """'no chest pain' must NOT trigger emergency."""
+    result = detect_emergency("no chest pain, no breathing difficulty")
+    assert result["emergency"] is False
+
+
+def test_negated_chest_pain_gone() -> None:
+    """Post-term negation ('gone', 'better') must NOT trigger emergency."""
+    result = detect_emergency("chest pain has gone, breathing is fine")
+    assert result["emergency"] is False
+
+
+def test_negated_mixed_with_non_emergency() -> None:
+    """Negated emergency + non-emergency symptom must NOT trigger."""
+    result = detect_emergency(
+        "I don't have chest pain but I have severe headache"
+    )
+    assert result["emergency"] is False
+
+
+def test_negated_without_breathing_difficulty() -> None:
+    """'without breathing difficulty' must NOT trigger emergency."""
+    result = detect_emergency("fever for 3 days without breathing difficulty")
+    assert result["emergency"] is False
+
+
+def test_negated_never_had_chest_pain() -> None:
+    """'never had chest pain' must NOT trigger emergency."""
+    result = detect_emergency("I never had chest pain in my life")
+    assert result["emergency"] is False
+
+
+def test_non_negated_still_triggers() -> None:
+    """Sanity check: actual chest pain must still trigger emergency."""
+    result = detect_emergency("I have severe chest pain")
+    assert result["emergency"] is True
+    assert result["reason"] == "Possible chest pain or heart attack symptoms detected"
+
+
+def test_full_bug_report_input() -> None:
+    """The exact input from the bug report must NOT trigger emergency."""
+    result = detect_emergency(
+        "I've had these symptoms for 3 days. My temperature is 101.4°F. "
+        "The cough is dry. The body pain is moderate. I don't have chest "
+        "pain or trouble breathing. I took paracetamol this morning, but "
+        "the fever keeps coming back."
+    )
+    assert result["emergency"] is False
+

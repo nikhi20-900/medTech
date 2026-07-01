@@ -341,7 +341,7 @@ def _matches_rule(text: str, rule: EmergencyRule) -> bool:
 
     for pattern in rule.patterns:
         match = pattern.search(text)
-        if match and not _is_negated(text, match.group(0)):
+        if match and not _is_pattern_match_negated(text, match):
             return True
 
     return False
@@ -359,6 +359,38 @@ def _normalize(text: str | None) -> str:
     return re.sub(r"\s+", " ", lowered).strip()
 
 
+def _is_pattern_match_negated(text: str, match: re.Match[str]) -> bool:
+    """Check whether a regex pattern match is negated.
+
+    Two-pronged check:
+
+    1. **Internal negation**: If the match span itself contains a negation
+       word (e.g. ``"pain is moderate i don't have chest"``), the match
+       is treated as negated.  This catches cross-clause false matches.
+
+    2. **Contextual negation**: Check the surrounding context (50 chars
+       before match start) for negation words that target the match.
+       This catches ``"no chest pain"`` where the negation word is just
+       before the match.
+    """
+    matched_text = match.group(0)
+
+    # 1. Internal: negation word *inside* the matched span
+    if _NEGATION_WORD_RE.search(matched_text):
+        return True
+
+    # 2. Contextual: negation word in the vicinity of the match
+    start = max(0, match.start() - 50)
+    end = min(len(text), match.end() + 50)
+    context = text[start:end]
+    return _is_negated(context, matched_text)
+
+
+_NEGATION_WORD_RE = re.compile(
+    r"\b(no|not|without|dont|don't|doesnt|doesn't|never)\b"
+)
+
+
 def _is_negated(text: str, term: str) -> bool:
     escaped = re.escape(term)
     return any(pattern.search(text) for pattern in _negation_patterns(escaped))
@@ -366,7 +398,7 @@ def _is_negated(text: str, term: str) -> bool:
 
 def _negation_patterns(escaped_term: str) -> Iterable[re.Pattern[str]]:
     yield re.compile(rf"\b(no|not|without|dont|don't|doesnt|doesn't|never)\s+.{{0,24}}\b{escaped_term}\b")
-    yield re.compile(rf"\b{escaped_term}\b.{{0,24}}\b(no|not|gone|better|stopped)\b")
+    yield re.compile(rf"\b{escaped_term}\b.{{0,24}}\b(gone|better|stopped|resolved|subsided)\b")
 
 
 def _no_emergency() -> DetectionResult:

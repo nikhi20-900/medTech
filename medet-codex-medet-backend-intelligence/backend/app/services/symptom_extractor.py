@@ -11,6 +11,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
+from backend.app.services.emergency_detector import _is_negated, _normalize
 from backend.app.services.symptom_patterns import (
     EMERGENCY_CANDIDATE_KEYWORDS,
     SYMPTOM_CATEGORIES,
@@ -56,9 +57,13 @@ def extract_symptoms(message: str) -> ExtractionResult:
     category = _resolve_category(category_scores)
 
     # ------------------------------------------------------------------
-    # 3. Emergency candidate check
+    # 3. Emergency candidate check (negation-aware)
     # ------------------------------------------------------------------
-    emergency_candidate = any(kw in text for kw in EMERGENCY_CANDIDATE_KEYWORDS)
+    normalized = _normalize(text)
+    emergency_candidate = any(
+        kw in normalized and not _is_negated(normalized, kw)
+        for kw in EMERGENCY_CANDIDATE_KEYWORDS
+    )
 
     # ------------------------------------------------------------------
     # 4. Confidence heuristic
