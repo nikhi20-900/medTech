@@ -4,11 +4,14 @@ import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   AlertTriangle,
+  AlertCircle,
+  Ambulance,
   Bot,
   CheckCircle2,
   HeartPulse,
   Hospital,
   Languages,
+  Loader2,
   MapPin,
   Mic,
   MicOff,
@@ -54,6 +57,8 @@ type ChatMessage = {
   emergency?: boolean;
   cards?: MedetCard[];
   timestamp: string;
+  severity?: string;
+  reason?: string | null;
 };
 
 const quickActions = [
@@ -65,67 +70,183 @@ const quickActions = [
 
 const sectionTitles = {
   en: {
-    summary: "Summary",
+    summary: "Clinical Summary",
     questions: "Follow-up Questions",
-    selfCare: "Self-care Advice",
-    warning: "Seek Medical Help If",
+    selfCare: "Self-care Recommendations",
+    monitor: "Monitor Your Symptoms",
+    emergency: "Go to the nearest Emergency Department immediately if you experience:"
   },
   hi: {
-    summary: "सारांश",
+    summary: "नैदानिक सारांश (Clinical Summary)",
     questions: "फॉलो-अप प्रश्न",
-    selfCare: "स्वयं-देखभाल सलाह",
-    warning: "तुरंत डॉक्टर से मिलें यदि",
+    selfCare: "आत्म-देखभाल सिफारिशें",
+    monitor: "अपने लक्षणों की निगरानी करें",
+    emergency: "यदि आपको इनमें से कुछ भी महसूस हो तो तुरंत नजदीकी आपातकालीन विभाग में जाएं:"
   },
   bn: {
-    summary: "সারসংক্ষেপ",
+    summary: "ক্লিনিকাল সারাংশ (Clinical Summary)",
     questions: "অনুসরণকারী প্রশ্ন",
-    selfCare: "স্ব-যত্ন পরামর্শ",
-    warning: "জরুরি চিকিৎসা নিন যদি",
+    selfCare: "স্ব-যত্ন সুপারিশ",
+    monitor: "আপনার উপসর্গ পর্যবেক্ষণ করুন",
+    emergency: "যদি আপনি নিম্নলিখিতগুলির মধ্যে কোনোটি অনুভব করেন তবে অবিলম্বে নিকটস্থ জরুরি বিভাগে যান:"
   },
   ne: {
-    summary: "सारांश",
+    summary: "चिकित्सकीय सारांश (Clinical Summary)",
     questions: "थप प्रश्नहरू",
-    selfCare: "आत्म-हेरचाह सल्लाह",
-    warning: "चिकित्सकीय मद्दत लिनुहोस् यदि",
+    selfCare: "आत्म-हेरचाह सिफारिसहरू",
+    monitor: "लक्षणहरूको निगरानी गर्नुहोस्",
+    emergency: "यदि तपाईंले यी लक्षणहरू अनुभव गर्नुभयो भने तुरुन्तै नजिकैको आपतकालीन विभागमा जानुहोस्:"
   },
   ta: {
-    summary: "சுருக்கம்",
+    summary: "மருத்துவ சுருக்கம் (Clinical Summary)",
     questions: "தொடர் கேள்விகள்",
-    selfCare: "சுய-கவனிப்பு ஆலோசனை",
-    warning: "மருத்துவ உதவி பெறவும்",
+    selfCare: "சுய-கவனிப்பு பரிந்துரைகள்",
+    monitor: "அறிகுறிகளைக் கண்காணிக்கவும்",
+    emergency: "பின்வருவனவற்றை நீங்கள் அனுபவித்தால் உடனடியாக அருகிலுள்ள அவசர சிகிச்சைப் பிரிவுக்குச் செல்லவும்:"
   },
   kn: {
-    summary: "ಸಾರಾಂಶ",
+    summary: "ಕ್ಲಿನಿಕಲ್ ಸಾರಾಂಶ (Clinical Summary)",
     questions: "ಫಾಲೋ-ಅಪ್ ಪ್ರಶ್ನೆಗಳು",
-    selfCare: "ಸ್ವಯಂ-ಆರೈಕೆ ಸಲಹೆ",
-    warning: "ವೈದ್ಯಕೀಯ ಸಹಾಯ ಪಡೆಯಿರಿ",
+    selfCare: "ಸ್ವಯಂ-ಆರೈಕೆ ಶಿಫಾರಸುಗಳು",
+    monitor: "ಲಕ್ಷಣಗಳನ್ನು ಗಮನಿಸಿ",
+    emergency: "ನೀವು ಈ ಕೆಳಗಿನವುಗಳನ್ನು ಅನುಭವಿಸಿದರೆ ತಕ್ಷಣ ಹತ್ತಿರದ ತುರ್ತು ಚಿಕಿತ್ಸಾ ವಿಭಾಗಕ್ಕೆ ಹೋಗಿ:"
   },
+  mr: {
+    summary: "वैद्यकीय सारांश (Clinical Summary)",
+    questions: "संभाषणाचे प्रश्न",
+    selfCare: "स्वयं-काळजी शिफारसी",
+    monitor: "लक्षणे तपासा",
+    emergency: "खालीलपैकी काही जाणवल्यास त्वरित जवळच्या आपत्कालीन विभागात जा:"
+  }
+};
+
+const localizedStatuses: Record<string, Record<string, string>> = {
+  en: { Routine: "Routine", Urgent: "Urgent", Emergency: "Emergency" },
+  hi: { Routine: "सामान्य (Routine)", Urgent: "त्वरित (Urgent)", Emergency: "आपातकालीन (Emergency)" },
+  bn: { Routine: "সাধারণ (Routine)", Urgent: "জরুরি (Urgent)", Emergency: "আতিশয় জরুরি (Emergency)" },
+  ne: { Routine: "सामान्य (Routine)", Urgent: "अत्यावश्यक (Urgent)", Emergency: "आपतकालीन (Emergency)" },
+  ta: { Routine: "வழக்கமான (Routine)", Urgent: "அவசரம் (Urgent)", Emergency: "உடனடி அவசரம் (Emergency)" },
+  kn: { Routine: "ಸಾಮಾನ್ಯ (Routine)", Urgent: "ಜರೂರು (Urgent)", Emergency: "ತುರ್ತು (Emergency)" },
+  mr: { Routine: "नेहमीचे (Routine)", Urgent: "तातडीचे (Urgent)", Emergency: "आपत्कालीन (Emergency)" }
+};
+
+const localizedCategories: Record<string, Record<string, string>> = {
+  en: {
+    respiratory: "Respiratory",
+    cardiac: "Cardiac",
+    neurological: "Neurological",
+    gastrointestinal: "Gastrointestinal",
+    pregnancy: "Pregnancy",
+    injury: "Injury",
+    general: "General Health",
+  },
+  hi: {
+    respiratory: "श्वसन (Respiratory)",
+    cardiac: "हृदय (Cardiac)",
+    neurological: "तंत्रिका (Neurological)",
+    gastrointestinal: "पाचन (Gastrointestinal)",
+    pregnancy: "गर्भावस्था (Pregnancy)",
+    injury: "चोट (Injury)",
+    general: "सामान्य स्वास्थ्य (General)",
+  },
+  bn: {
+    respiratory: "শ্বাসযন্ত্র (Respiratory)",
+    cardiac: "হৃদরোগ (Cardiac)",
+    neurological: "স্নায়বিক (Neurological)",
+    gastrointestinal: "পরিপাকতন্ত্র (Gastrointestinal)",
+    pregnancy: "গর্ভাবস্থা (Pregnancy)",
+    injury: "আঘাত (Injury)",
+    general: "সাধারণ স্বাস্থ্য (General)",
+  },
+  ne: {
+    respiratory: "श्वसन (Respiratory)",
+    cardiac: "मुटु (Cardiac)",
+    neurological: "न्युरोलोजिकल (Neurological)",
+    gastrointestinal: "पाचन (Gastrointestinal)",
+    pregnancy: "गर्भावस्था (Pregnancy)",
+    injury: "चोटपटक (Injury)",
+    general: "सामान्य स्वास्थ्य (General)",
+  },
+  ta: {
+    respiratory: "சுவாச மண்டலம் (Respiratory)",
+    cardiac: "இருதயம் (Cardiac)",
+    neurological: "நரம்பியல் (Neurological)",
+    gastrointestinal: "இரைப்பை குடல் (Gastrointestinal)",
+    pregnancy: "கர்ப்பம் (Pregnancy)",
+    injury: "காயம் (Injury)",
+    general: "பொது ஆரோக்கியம் (General)",
+  },
+  kn: {
+    respiratory: "ಶ್ವಾಸಕೋಶದ (Respiratory)",
+    cardiac: "ಹೃದಯದ (Cardiac)",
+    neurological: "ನರರೋಗ (Neurological)",
+    gastrointestinal: "ಜೀರ್ಣಾಂಗ (Gastrointestinal)",
+    pregnancy: "ಗರ್ಭಾವಸ್ಥೆ (Pregnancy)",
+    injury: "ಗಾಯ (Injury)",
+    general: "ಸಾಮಾನ್ಯ ಆರೋಗ್ಯ (General)",
+  },
+  mr: {
+    respiratory: "श्वसनसंस्था (Respiratory)",
+    cardiac: "हृदय (Cardiac)",
+    neurological: "मज्जासंस्था (Neurological)",
+    gastrointestinal: "पचनसंस्था (Gastrointestinal)",
+    pregnancy: "गरोदरपण (Pregnancy)",
+    injury: "जखम (Injury)",
+    general: "सामान्य आरोग्य (General)",
+  }
+};
+
+const emergencyFallbacks: Record<string, string[]> = {
+  en: ["Go to the nearest Emergency Department immediately or call 112/911."],
+  hi: ["तुरंत नजदीकी आपातकालीन विभाग में जाएं या 112 पर कॉल करें।"],
+  bn: ["অবিলম্বে নিকটস্থ জরুরি বিভাগে যান বা ১১২ নম্বরে কল করুন।"],
+  ne: ["तुरुन्तै नजिकैको आपतकालीन विभागमा जानुहोस् वा ११२ मा कल गर्नुहोस्।"],
+  ta: ["உடனடியாக அருகிலுள்ள அவசர சிகிச்சைப் பிரிவுக்குச் செல்லவும் அல்லது 112 ஐ அழைக்கவும்."],
+  kn: ["ತಕ್ಷಣ ಹತ್ತಿರದ ತುರ್ತು ಚಿಕಿತ್ಸಾ ವಿಭಾಗಕ್ಕೆ ಹೋಗಿ ಅಥವಾ 112 ಗೆ ಕರೆ ಮಾಡಿ."],
+  mr: ["त्वरित जवळच्या आपत्कालीन विभागात जा किंवा 112 वर कॉल करा।"]
 };
 
 export interface ParsedResponse {
   summary: string;
   questions: string[];
-  selfCare: string;
-  warning: string;
+  selfCare: string[];
+  warnings: string[];
+}
+
+function isSectionHeader(line: string): boolean {
+  const t = line.trim();
+  return (
+    t.startsWith("#") ||
+    (t.startsWith("**") && t.endsWith("**")) ||
+    t.endsWith(":")
+  );
+}
+
+function stripBullet(line: string): string {
+  return line
+    .replace(/^[\s]*[-*•]\s+/, "")
+    .replace(/^[\s]*\d+[.)]\s+/, "")
+    .trim();
 }
 
 export function parseAIResponse(text: string): ParsedResponse {
-  const sections: ParsedResponse = {
+  const result: ParsedResponse = {
     summary: "",
     questions: [],
-    selfCare: "",
-    warning: "",
+    selfCare: [],
+    warnings: [],
   };
 
-  if (!text) return sections;
+  if (!text) return result;
 
   const lines = text.split("\n");
-  let currentSection: "summary" | "questions" | "selfCare" | "warning" = "summary";
+  let currentState: "summary" | "questions" | "selfCare" | "warning" = "summary";
 
   const questionTriggers = [
     /follow-up question/i,
     /questions to help/i,
     /could you tell me/i,
+    /can you tell me/i,
     /please answer/i,
     /questions:/i,
     /follow up/i,
@@ -133,6 +254,7 @@ export function parseAIResponse(text: string): ParsedResponse {
     /অনুসরণকারী প্রশ্ন/i,
     /थप प्रश्नहरू/i,
     /தொடர் கேள்விகள்/i,
+    /ಕೇಳ್ವಿಗಳು/i,
     /ಫಾಲೋ-ಅಪ್ ಪ್ರಶ್ನೆಗಳು/i
   ];
   
@@ -142,6 +264,7 @@ export function parseAIResponse(text: string): ParsedResponse {
     /home remedies/i,
     /stay comfortable/i,
     /practical step/i,
+    /for now/i,
     /स्वयं-देखभाल/i,
     /स्व-हेरचाह/i,
     /স্ব-যত্ন/i,
@@ -168,7 +291,7 @@ export function parseAIResponse(text: string): ParsedResponse {
     /ಎಚ್ಚರಿಕೆ/i
   ];
 
-  for (let line of lines) {
+  for (const line of lines) {
     const trimmed = line.trim();
     if (!trimmed) continue;
 
@@ -176,40 +299,43 @@ export function parseAIResponse(text: string): ParsedResponse {
     let transitioned = false;
     
     if (warningTriggers.some(trigger => trigger.test(trimmed))) {
-      currentSection = "warning";
+      currentState = "warning";
       transitioned = true;
     }
     else if (questionTriggers.some(trigger => trigger.test(trimmed))) {
-      currentSection = "questions";
+      currentState = "questions";
       transitioned = true;
     }
     else if (selfCareTriggers.some(trigger => trigger.test(trimmed))) {
-      currentSection = "selfCare";
+      currentState = "selfCare";
       transitioned = true;
     }
 
-    if (transitioned) {
-      if (trimmed.startsWith("#") || trimmed.startsWith("*") || trimmed.endsWith(":")) {
-        continue;
-      }
+    if (transitioned && isSectionHeader(trimmed)) {
+      continue;
     }
 
     // Append to current section
-    if (currentSection === "summary") {
-      sections.summary += (sections.summary ? "\n" : "") + trimmed;
-    } else if (currentSection === "questions") {
-      const cleanQuestion = trimmed.replace(/^[-*•\d+.\s?]+/, "").trim();
-      if (cleanQuestion) {
-        sections.questions.push(cleanQuestion);
+    if (currentState === "summary") {
+      if (trimmed.endsWith("?")) {
+        const clean = stripBullet(trimmed);
+        if (clean) result.questions.push(clean);
+      } else {
+        result.summary += (result.summary ? "\n" : "") + trimmed;
       }
-    } else if (currentSection === "selfCare") {
-      sections.selfCare += (sections.selfCare ? "\n" : "") + trimmed;
-    } else if (currentSection === "warning") {
-      sections.warning += (sections.warning ? "\n" : "") + trimmed;
+    } else if (currentState === "questions") {
+      const clean = stripBullet(trimmed);
+      if (clean) result.questions.push(clean);
+    } else if (currentState === "selfCare") {
+      const clean = stripBullet(trimmed);
+      if (clean) result.selfCare.push(clean);
+    } else if (currentState === "warning") {
+      const clean = stripBullet(trimmed);
+      if (clean) result.warnings.push(clean);
     }
   }
 
-  return sections;
+  return result;
 }
 
 function formatMessageText(text: string) {
@@ -279,56 +405,131 @@ function renderBackendCards(cards?: MedetCard[], messageId?: number) {
   );
 }
 
+interface PartitionedWarning {
+  monitor: string[];
+  emergency: string[];
+}
+
+function partitionWarningText(warnings: string[]): PartitionedWarning {
+  const monitor: string[] = [];
+  const emergency: string[] = [];
+
+  const emergencyRegex = /chest\s*pain|breath|bleed|unconscious|faint|seizure|stroke|slurred|droop|anaphylaxis|swelling|paralysis|heart\s*attack|112|911|सीने\s*में\s*दर्द|सांस|बेहोश|खून|दौरा|बुके\s*ব্যথা|সতর্ক|জরুরি|শ্বাসকষ্ট|অজ্ঞান|রক্তপাত|খিঁচুনি|छाती\s*दुखाइ|सास\s*फेर्न|மார்பு\s*வலி|மூச்சு|மயக்கம்|ರಕ್ತ|ಎದೆ\s*ನೋವು|ಉಸಿರಾಟ|ಪ್ರಜ್ಞೆ|ರತ್ತಪ್ಪೋಕ್ಕು/i;
+
+  for (const line of warnings) {
+    const cleanLine = stripBullet(line);
+    if (!cleanLine) continue;
+
+    if (emergencyRegex.test(cleanLine)) {
+      emergency.push(cleanLine);
+    } else {
+      monitor.push(cleanLine);
+    }
+  }
+
+  return { monitor, emergency };
+}
+
+function getAssessmentMetadata(
+  severity: string | undefined, 
+  emergency: boolean | undefined, 
+  reason: string | null | undefined, 
+  cards: MedetCard[] | undefined,
+  language: string
+) {
+  let status = "Routine";
+  if (emergency) {
+    status = "Emergency";
+  } else if (severity === "high" || severity === "medium" || severity === "urgent") {
+    status = "Urgent";
+  }
+
+  let category = "general";
+  const reasonLower = (reason || "").toLowerCase();
+  
+  const hasCardType = (type: string) => (cards || []).some(c => c.type === type);
+
+  if (reasonLower.includes("chest") || reasonLower.includes("heart") || reasonLower.includes("cardiac")) {
+    category = "cardiac";
+  } else if (reasonLower.includes("breathing") || reasonLower.includes("breath") || reasonLower.includes("respiratory")) {
+    category = "respiratory";
+  } else if (reasonLower.includes("stroke") || reasonLower.includes("neurological") || reasonLower.includes("unconscious")) {
+    category = "neurological";
+  } else if (reasonLower.includes("pregnancy") || reasonLower.includes("pregnant")) {
+    category = "pregnancy";
+  } else if (reasonLower.includes("bleeding") || reasonLower.includes("injury")) {
+    category = "injury";
+  } else if (hasCardType("hydration")) {
+    category = "gastrointestinal";
+  }
+
+  return { status, category };
+}
+
 function AssistantResponse({ 
   text, 
   emergency, 
   cards, 
   id, 
-  language 
+  language,
+  severity,
+  reason
 }: { 
   text: string; 
   emergency?: boolean; 
   cards?: MedetCard[]; 
   id: number; 
-  language: string 
+  language: string;
+  severity?: string;
+  reason?: string | null;
 }) {
   const parsed = useMemo(() => parseAIResponse(text), [text]);
   
-  const hasMultipleSections = useMemo(() => {
-    return parsed.questions.length > 0 || !!parsed.selfCare || !!parsed.warning;
-  }, [parsed]);
+  const { status, category } = useMemo(() => {
+    return getAssessmentMetadata(severity, emergency, reason, cards, language);
+  }, [severity, emergency, reason, cards, language]);
 
-  if (!hasMultipleSections) {
-    return (
-      <div className="space-y-3.5 w-full">
-        <div className="space-y-1">
-          {formatMessageText(text || "Thinking...")}
-        </div>
-        {renderBackendCards(cards, id)}
-      </div>
-    );
-  }
+  const { monitor: monitorLines, emergency: emergencyLines } = useMemo(() => {
+    return partitionWarningText(parsed.warnings);
+  }, [parsed.warnings]);
 
   const titles = sectionTitles[language as keyof typeof sectionTitles] || sectionTitles.en;
 
   return (
-    <div className="space-y-3 w-full">
+    <div className="space-y-3.5 w-full">
       {/* 1. Summary Card */}
       {parsed.summary && (
         <motion.div 
-          initial={{ opacity: 0, y: 4 }} 
+          layout
+          initial={{ opacity: 0, y: 8 }} 
           animate={{ opacity: 1, y: 0 }}
-          className="p-3.5 rounded-r-2xl rounded-l-md border border-slate-100 border-l-4 border-l-blue-500 bg-blue-50/10 dark:bg-blue-950/5 flex gap-3 items-start"
+          className="p-4 rounded-r-2xl rounded-l-md border border-slate-100 border-l-4 border-l-blue-500 bg-blue-50/10 dark:bg-blue-950/5 flex gap-3.5 items-start transition-all duration-300 hover:shadow-sm"
         >
-          <div className="p-1.5 rounded-lg bg-blue-100/40 text-blue-600 dark:bg-blue-900/30 dark:text-blue-400 shrink-0">
-            <Stethoscope className="h-4 w-4" />
+          <div className="p-2 rounded-xl bg-blue-100/40 text-blue-600 dark:bg-blue-900/30 dark:text-blue-400 shrink-0">
+            <Stethoscope className="h-4.5 w-4.5" />
           </div>
-          <div className="space-y-0.5 flex-1 min-w-0">
-            <h4 className="text-[10px] font-extrabold text-blue-900 dark:text-blue-300 tracking-wider uppercase flex items-center gap-1">
+          <div className="space-y-2 flex-1 min-w-0">
+            <h4 className="text-[11px] font-extrabold text-blue-900 dark:text-blue-300 tracking-wider uppercase flex items-center gap-1">
               <span>🩺</span> {titles.summary}
             </h4>
-            <div className="space-y-0.5">
+            <div className="text-sm sm:text-base leading-relaxed text-slate-700 dark:text-slate-300 font-medium">
               {formatMessageText(parsed.summary)}
+            </div>
+            
+            {/* Status & Category Chips */}
+            <div className="flex flex-wrap gap-2 pt-1.5">
+              <span className={`text-[10px] sm:text-xs font-black px-2.5 py-1 rounded-full border shadow-2xs select-none ${
+                status === "Emergency"
+                  ? "bg-red-50 text-red-700 border-red-200 dark:bg-red-950/40 dark:text-red-400 dark:border-red-900/50"
+                  : status === "Urgent"
+                  ? "bg-amber-50 text-amber-700 border-amber-200 dark:bg-amber-950/40 dark:text-amber-400 dark:border-amber-900/50"
+                  : "bg-emerald-50 text-emerald-700 border-emerald-200 dark:bg-emerald-950/40 dark:text-emerald-400 dark:border-emerald-900/50"
+              }`}>
+                {localizedStatuses[language]?.[status] || status}
+              </span>
+              <span className="text-[10px] sm:text-xs font-black px-2.5 py-1 rounded-full border border-blue-200 bg-blue-50 text-blue-700 dark:bg-blue-950/40 dark:text-blue-400 dark:border-blue-900/50 shadow-2xs select-none">
+                {localizedCategories[language]?.[category] || category}
+              </span>
             </div>
           </div>
         </motion.div>
@@ -337,24 +538,86 @@ function AssistantResponse({
       {/* 2. Questions Card */}
       {parsed.questions.length > 0 && (
         <motion.div 
-          initial={{ opacity: 0, y: 4 }} 
+          layout
+          initial={{ opacity: 0, y: 8 }} 
           animate={{ opacity: 1, y: 0 }}
-          className="p-3.5 rounded-r-2xl rounded-l-md border border-slate-100 border-l-4 border-l-purple-500 bg-purple-50/10 dark:bg-purple-950/5 flex gap-3 items-start"
+          className="p-4 rounded-r-2xl rounded-l-md border border-slate-100 border-l-4 border-l-purple-500 bg-purple-50/10 dark:bg-purple-950/5 flex gap-3.5 items-start transition-all duration-300 hover:shadow-sm"
         >
-          <div className="p-1.5 rounded-lg bg-purple-100/40 text-purple-600 dark:bg-purple-900/30 dark:text-purple-400 shrink-0">
-            <ClipboardList className="h-4 w-4" />
+          <div className="p-2 rounded-xl bg-purple-100/40 text-purple-600 dark:bg-purple-900/30 dark:text-purple-400 shrink-0">
+            <ClipboardList className="h-4.5 w-4.5" />
           </div>
-          <div className="space-y-2 flex-1 min-w-0">
-            <h4 className="text-[10px] font-extrabold text-purple-900 dark:text-purple-300 tracking-wider uppercase flex items-center gap-1">
-              <span>❓</span> {titles.questions}
-            </h4>
-            <ul className="space-y-2">
+          <div className="space-y-3 flex-1 min-w-0">
+            <div className="flex items-center justify-between gap-2">
+              <h4 className="text-[11px] font-extrabold text-purple-900 dark:text-purple-300 tracking-wider uppercase flex items-center gap-1">
+                <span>❓</span> {titles.questions}
+              </h4>
+              <span className="text-[9px] sm:text-[10px] font-black px-2 py-0.5 rounded-full bg-purple-100 text-purple-700 dark:bg-purple-950/60 dark:text-purple-400 border border-purple-200 dark:border-purple-900/50 shadow-3xs select-none animate-pulse">
+                {parsed.questions.length} {language === "hi" ? "प्रश्न शेष" : language === "bn" ? "প্রশ্ন বাকি" : "questions remaining"}
+              </span>
+            </div>
+            <ol className="space-y-2">
               {parsed.questions.map((q, idx) => (
-                <li key={idx} className="text-xs sm:text-sm text-purple-950/90 leading-relaxed font-semibold flex gap-2 items-start">
-                  <span className="inline-flex items-center justify-center h-4.5 w-4.5 rounded bg-purple-100 text-purple-800 text-[10px] font-extrabold shrink-0 mt-0.5">
+                <li key={idx} className="text-sm sm:text-base text-slate-700 dark:text-slate-300 leading-relaxed font-medium flex gap-2.5 items-start">
+                  <span className="inline-flex items-center justify-center h-5 w-5 rounded bg-purple-100 dark:bg-purple-900 text-purple-800 dark:text-purple-300 text-[10px] font-extrabold shrink-0 mt-0.5">
                     {idx + 1}
                   </span>
-                  <span className="text-slate-700 dark:text-slate-300 font-medium">{q}</span>
+                  <span>{q}</span>
+                </li>
+              ))}
+            </ol>
+          </div>
+        </motion.div>
+      )}
+
+      {/* 3. Self-care Recommendations */}
+      {parsed.selfCare.length > 0 && (
+        <motion.div 
+          layout
+          initial={{ opacity: 0, y: 8 }} 
+          animate={{ opacity: 1, y: 0 }}
+          className="p-4 rounded-r-2xl rounded-l-md border border-slate-100 border-l-4 border-l-emerald-500 bg-emerald-50/10 dark:bg-emerald-950/5 flex gap-3.5 items-start transition-all duration-300 hover:shadow-sm"
+        >
+          <div className="p-2 rounded-xl bg-emerald-100/40 text-emerald-600 dark:bg-emerald-900/30 dark:text-emerald-400 shrink-0">
+            <HeartPulse className="h-4.5 w-4.5" />
+          </div>
+          <div className="space-y-3 flex-1 min-w-0">
+            <h4 className="text-[11px] font-extrabold text-emerald-900 dark:text-emerald-300 tracking-wider uppercase flex items-center gap-1">
+              <span>💊</span> {titles.selfCare}
+            </h4>
+            <ol className="space-y-2">
+              {parsed.selfCare.map((step, idx) => (
+                <li key={idx} className="text-sm sm:text-base text-slate-700 dark:text-slate-300 leading-relaxed font-medium flex gap-2.5 items-start">
+                  <span className="inline-flex items-center justify-center h-5 w-5 rounded bg-emerald-100 dark:bg-emerald-900 text-emerald-800 dark:text-emerald-300 text-[10px] font-extrabold shrink-0 mt-0.5">
+                    {idx + 1}
+                  </span>
+                  <span>{step}</span>
+                </li>
+              ))}
+            </ol>
+          </div>
+        </motion.div>
+      )}
+
+      {/* 4. Monitor Your Symptoms */}
+      {monitorLines.length > 0 && (
+        <motion.div 
+          layout
+          initial={{ opacity: 0, y: 8 }} 
+          animate={{ opacity: 1, y: 0 }}
+          className="p-4 rounded-r-2xl rounded-l-md border border-slate-100 border-l-4 border-l-amber-500 bg-amber-50/10 dark:bg-amber-950/5 flex gap-3.5 items-start transition-all duration-300 hover:shadow-sm"
+        >
+          <div className="p-2 rounded-xl bg-amber-100/40 text-amber-600 dark:bg-amber-900/30 dark:text-amber-400 shrink-0">
+            <AlertCircle className="h-4.5 w-4.5" />
+          </div>
+          <div className="space-y-2.5 flex-1 min-w-0">
+            <h4 className="text-[11px] font-extrabold text-amber-800 dark:text-amber-300 tracking-wider uppercase flex items-center gap-1">
+              <span>⚠️</span> {titles.monitor}
+            </h4>
+            <ul className="space-y-2">
+              {monitorLines.map((item, idx) => (
+                <li key={idx} className="text-sm sm:text-base text-slate-700 dark:text-slate-300 leading-relaxed font-medium flex items-start gap-2.5">
+                  <span className="text-amber-500 shrink-0 mt-2 h-1.5 w-1.5 rounded-full bg-amber-500" />
+                  <span>{item}</span>
                 </li>
               ))}
             </ul>
@@ -362,44 +625,29 @@ function AssistantResponse({
         </motion.div>
       )}
 
-      {/* 3. Self-care Card */}
-      {parsed.selfCare && (
+      {/* 5. Emergency Signs */}
+      {(emergency || emergencyLines.length > 0) && (
         <motion.div 
-          initial={{ opacity: 0, y: 4 }} 
+          layout
+          initial={{ opacity: 0, y: 8 }} 
           animate={{ opacity: 1, y: 0 }}
-          className="p-3.5 rounded-r-2xl rounded-l-md border border-slate-100 border-l-4 border-l-emerald-500 bg-emerald-50/10 dark:bg-emerald-950/5 flex gap-3 items-start"
+          className="p-4 rounded-r-2xl rounded-l-md border border-red-100 border-l-4 border-l-red-500 bg-red-50/15 dark:bg-red-950/5 ring-2 ring-red-100/60 dark:ring-red-900/20 flex gap-3.5 items-start transition-all duration-300 hover:shadow-sm"
         >
-          <div className="p-1.5 rounded-lg bg-emerald-100/40 text-emerald-600 dark:bg-emerald-900/30 dark:text-emerald-400 shrink-0">
-            <HeartPulse className="h-4 w-4" />
+          <div className="p-2 rounded-xl bg-red-100/40 text-red-600 dark:bg-red-900/30 dark:text-red-400 shrink-0 animate-pulse">
+            <Ambulance className="h-4.5 w-4.5" />
           </div>
-          <div className="space-y-0.5 flex-1 min-w-0">
-            <h4 className="text-[10px] font-extrabold text-emerald-900 dark:text-emerald-300 tracking-wider uppercase flex items-center gap-1">
-              <span>💊</span> {titles.selfCare}
+          <div className="space-y-2.5 flex-1 min-w-0">
+            <h4 className="text-[11px] font-extrabold text-red-950 dark:text-red-300 tracking-wider uppercase flex items-center gap-1 leading-normal">
+              <span>🚨</span> {titles.emergency}
             </h4>
-            <div className="space-y-0.5">
-              {formatMessageText(parsed.selfCare)}
-            </div>
-          </div>
-        </motion.div>
-      )}
-
-      {/* 4. Warning Card */}
-      {(parsed.warning || emergency) && (
-        <motion.div 
-          initial={{ opacity: 0, y: 4 }} 
-          animate={{ opacity: 1, y: 0 }}
-          className="p-3.5 rounded-r-2xl rounded-l-md border border-slate-100 border-l-4 border-l-red-500 bg-red-50/10 dark:bg-red-950/5 flex gap-3 items-start"
-        >
-          <div className="p-1.5 rounded-lg bg-red-100/40 text-red-600 dark:bg-red-900/30 dark:text-red-400 shrink-0">
-            <AlertTriangle className="h-4 w-4 animate-pulse" />
-          </div>
-          <div className="space-y-0.5 flex-1 min-w-0">
-            <h4 className="text-[10px] font-extrabold text-red-900 dark:text-red-300 tracking-wider uppercase flex items-center gap-1">
-              <span>🚨</span> {titles.warning}
-            </h4>
-            <div className="space-y-0.5">
-              {formatMessageText(parsed.warning || "Seek immediate medical help if symptoms get worse or if you experience chest pain, difficulty breathing, or severe bleeding.")}
-            </div>
+            <ul className="space-y-2">
+              {(emergencyLines.length > 0 ? emergencyLines : (emergencyFallbacks[language] || emergencyFallbacks.en)).map((item, idx) => (
+                <li key={idx} className="text-sm sm:text-base text-red-950 dark:text-red-200 leading-relaxed font-bold flex items-start gap-2.5">
+                  <span className="bg-red-600 shrink-0 mt-2 h-1.5 w-1.5 rounded-full animate-pulse" />
+                  <span>{item}</span>
+                </li>
+              ))}
+            </ul>
           </div>
         </motion.div>
       )}
@@ -591,6 +839,8 @@ export default function ChatPage() {
                   text: metadata.medet?.response || message.text,
                   emergency: Boolean(metadata.medet?.emergency),
                   cards: metadata.medet?.cards || [],
+                  severity: metadata.medet?.severity || message.severity,
+                  reason: metadata.medet?.reason ?? message.reason,
                 }
                 : message
             )
@@ -754,6 +1004,8 @@ export default function ChatPage() {
                               cards={message.cards} 
                               id={message.id}
                               language={language}
+                              severity={message.severity}
+                              reason={message.reason}
                             />
                           )}
 

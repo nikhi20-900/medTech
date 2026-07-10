@@ -49,25 +49,6 @@ FOLLOWUP_QUESTIONS = {
     ]
 }
 
-# Maps gap keys to human-readable follow-up questions.
-# Used to convert question IDs back to displayable text.
-GAP_TO_QUESTION: dict[str, str] = {
-    "duration": "How long have you had these symptoms?",
-    "severity": "How severe are your symptoms?",
-    "symptom_detail": "Do you have any other symptoms?",
-    "temperature": "What is your temperature?",
-    "bleeding_detail": "How much bleeding is there?",
-}
-
-# Emergency-related gap keys — prioritized first.
-_EMERGENCY_GAPS: frozenset[str] = frozenset({
-    "bleeding_detail",
-    "severity",
-})
-
-_MAX_FOLLOWUP_QUESTIONS = 3
-
-
 def get_followup_questions(category: str) -> list[str]:
     """Return category-specific follow-up questions.
 
@@ -79,42 +60,25 @@ def get_followup_questions(category: str) -> list[str]:
     )
 
 
-def get_contextual_followups(state: ConversationState) -> list[str]:
+def get_contextual_followups(
+    state: ConversationState,
+    max_questions: int = 3,
+) -> list[str]:
     """Return follow-up questions based on conversation state.
 
-    Rules:
+    Delegates entirely to the deterministic
+    :class:`~backend.app.services.question_prioritizer.QuestionPrioritizer`.
+
+    Rules (enforced by the prioritizer):
     - Never ask about information already collected.
-    - Return at most 3 highest-priority missing questions.
-    - Prioritize emergency-related information first.
-    - If no important information is missing, return an empty list.
+    - Return at most *max_questions* highest-priority questions.
+    - Emergency questions always override routine questions.
+    - Prerequisite-gated questions only appear when relevant.
+    - Questions are diversified across semantic groups.
+    - Same input always produces the same output.
     """
-    # Determine which gaps are still unanswered
-    answered = set(state.answered_questions)
-    remaining_gaps: list[str] = [
-        gap for gap in state.missing_information
-        if gap not in answered
-    ]
+    from backend.app.services.question_prioritizer import QuestionPrioritizer
 
-    if not remaining_gaps:
-        return []
-
-    # Sort: emergency-related gaps first, then others
-    emergency_gaps = [g for g in remaining_gaps if g in _EMERGENCY_GAPS]
-    other_gaps = [g for g in remaining_gaps if g not in _EMERGENCY_GAPS]
-    prioritized = emergency_gaps + other_gaps
-
-    # Convert gap keys to human-readable questions (max 3)
-    questions: list[str] = []
-    for gap in prioritized[:_MAX_FOLLOWUP_QUESTIONS]:
-        question = GAP_TO_QUESTION.get(gap)
-        if question:
-            questions.append(question)
-
-    # If we have room, fill with category-specific questions
-    # that aren't already covered
-    if len(questions) < _MAX_FOLLOWUP_QUESTIONS:
-        for q in get_followup_questions(state.triage.category):
-            if q not in questions and len(questions) < _MAX_FOLLOWUP_QUESTIONS:
-                questions.append(q)
-
-    return questions
+    prioritizer = QuestionPrioritizer()
+    selected = prioritizer.select(state, max_questions=max_questions)
+    return [q.text for q in selected]

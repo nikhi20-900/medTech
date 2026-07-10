@@ -11,12 +11,16 @@ logic.
 
 from __future__ import annotations
 
+import logging
+import re
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from enum import Enum
 from typing import Any
 
 from backend.app.services.symptom_classifier import TriageContext
+
+logger = logging.getLogger("medet.conversation_state")
 
 
 # ---------------------------------------------------------------------------
@@ -80,11 +84,23 @@ class ConversationState:
 
 QUESTION_ID_TO_GAP: dict[str, str] = {
     "duration": "duration",
+    "symptom_progression": "duration",
     "temperature": "temperature",
     "cough_type": "symptom_detail",
-    "severity": "severity",
-    "bleeding_detail": "bleeding_detail",
     "breathing_difficulty": "symptom_detail",
+    "swallowing_difficulty": "symptom_detail",
+    "chest_pain_location": "severity",
+    "chest_pain_radiation": "severity",
+    "headache_severity": "severity",
+    "vision_changes": "symptom_detail",
+    "vomiting": "symptom_detail",
+    "fluid_intake": "symptom_detail",
+    "injury_time": "duration",
+    "bleeding_amount": "bleeding_detail",
+    "pregnancy_weeks": "symptom_detail",
+    "medication_taken": "symptom_detail",
+    "consciousness_level": "severity",
+    "severe_pain": "severity",
 }
 
 
@@ -94,12 +110,11 @@ def _extract_information(
 ) -> dict[str, PatientFact]:
     """Extract structured patient facts from a message.
 
-    .. note::
-        This is a **stub**.  Real extraction logic (temperature regex,
-        cough type detection, etc.) will be added later.  For now it
-        pulls only what the triage pipeline already provides.
+    Pulls information from the triage pipeline as well as rule-based
+    heuristic matching on the message text (e.g., temperature, cough type).
     """
     facts: dict[str, PatientFact] = {}
+    text = message.lower().strip()
 
     # Pull duration from triage (already extracted by duration_detector)
     if triage.duration is not None:
@@ -132,6 +147,118 @@ def _extract_information(
             confidence=triage.confidence,
             source="triage_pipeline",
         )
+
+    # 1. Temperature Values
+    temp_match = re.search(
+        r"\b(9[5-9](?:\.\d+)?|10[0-6](?:\.\d+)?|3[5-9](?:\.\d+)?|4[0-2](?:\.\d+)?)\s*(?:f|c|degree|°)?\b",
+        text,
+    )
+    if temp_match:
+        facts["temperature"] = PatientFact(
+            value=temp_match.group(1),
+            confidence=0.95,
+            source="rule_extraction",
+        )
+    elif re.search(r"\b(no\s+fever|normal\s+temp|no\s+temp|normal\s+temperature|without\s+fever)\b", text):
+        facts["temperature"] = PatientFact(
+            value="normal",
+            confidence=0.95,
+            source="rule_extraction",
+        )
+    elif re.search(r"\b(fever|feverish|high\s+temp|high\s+temperature)\b", text):
+        facts["temperature"] = PatientFact(
+            value="high",
+            confidence=0.90,
+            source="rule_extraction",
+        )
+
+    # 2. Cough Type
+    if re.search(r"\b(dry\s+cough|cough\s+is\s+dry)\b", text) or (re.search(r"\b(dry)\b", text) and "cough" in text):
+        facts["cough_type"] = PatientFact(value="dry", confidence=0.95, source="rule_extraction")
+    elif re.search(r"\b(wet\s+cough|cough\s+producing\s+mucus|cough\s+with\s+mucus|phlegm|mucus)\b", text):
+        facts["cough_type"] = PatientFact(value="mucus", confidence=0.95, source="rule_extraction")
+
+    # 3. Breathing Difficulty
+    if re.search(r"\b(difficulty\s+breathing|short\s+of\s+breath|can't\s+breathe|cant\s+breathe|trouble\s+breathing|breathless)\b", text):
+        facts["breathing_difficulty"] = PatientFact(value="yes", confidence=0.95, source="rule_extraction")
+    elif re.search(r"\b(no\s+difficulty\s+breathing|breathing\s+is\s+fine|no\s+trouble\s+breathing)\b", text):
+        facts["breathing_difficulty"] = PatientFact(value="no", confidence=0.95, source="rule_extraction")
+
+    # 4. Swallowing Difficulty
+    if re.search(r"\b(hard\s+to\s+swallow|painful\s+to\s+swallow|cannot\s+swallow|can't\s+swallow|hurts\s+to\s+swallow)\b", text):
+        facts["swallowing_difficulty"] = PatientFact(value="yes", confidence=0.95, source="rule_extraction")
+    elif re.search(r"\b(no\s+difficulty\s+swallowing|can\s+swallow|swallowing\s+is\s+fine)\b", text):
+        facts["swallowing_difficulty"] = PatientFact(value="no", confidence=0.95, source="rule_extraction")
+
+    # 5. Chest Pain Location & Radiation
+    if "chest pain" in text:
+        loc_match = re.search(r"\b(center|left|right|middle|side)\b", text)
+        if loc_match:
+            facts["chest_pain_location"] = PatientFact(value=loc_match.group(1), confidence=0.95, source="rule_extraction")
+        
+        rad_match = re.search(r"\b(spreads?\s+to|radiates?\s+to|goes\s+to|pain\s+in)\s*(?:my\s*)?(arm|jaw|back|shoulder)\b", text)
+        if rad_match:
+            facts["chest_pain_radiation"] = PatientFact(value=rad_match.group(2), confidence=0.95, source="rule_extraction")
+        elif re.search(r"\b(doesn't\s+spread|no\s+radiation|does\s+not\s+spread|stay\s+in\s+chest)\b", text):
+            facts["chest_pain_radiation"] = PatientFact(value="no", confidence=0.95, source="rule_extraction")
+
+    # 6. Headache Severity
+    if "headache" in text:
+        sev_match = re.search(r"\b(10|[1-9])\s*(?:out\s+of\s+10)?\b", text)
+        if sev_match:
+            facts["headache_severity"] = PatientFact(value=sev_match.group(1), confidence=0.95, source="rule_extraction")
+
+    # 7. Vision Changes
+    if re.search(r"\b(blurred\s+vision|blurry|double\s+vision|cannot\s+see|can't\s+see|vision\s+changes)\b", text):
+        facts["vision_changes"] = PatientFact(value="yes", confidence=0.95, source="rule_extraction")
+    elif re.search(r"\b(no\s+vision\s+changes|vision\s+is\s+fine|normal\s+vision)\b", text):
+        facts["vision_changes"] = PatientFact(value="no", confidence=0.95, source="rule_extraction")
+
+    # 8. Vomiting & Fluid Intake
+    if re.search(r"\b(vomit|vomited|vomiting|throwing\s+up|threw\s+up)\b", text):
+        facts["vomiting"] = PatientFact(value="yes", confidence=0.95, source="rule_extraction")
+    elif re.search(r"\b(no\s+vomiting|not\s+vomiting|haven't\s+vomited)\b", text):
+        facts["vomiting"] = PatientFact(value="no", confidence=0.95, source="rule_extraction")
+
+    if re.search(r"\b(can\s+keep\s+fluids\s+down|can\s+drink|keeping\s+fluids\s+down|drinking\s+fine)\b", text):
+        facts["fluid_intake"] = PatientFact(value="yes", confidence=0.95, source="rule_extraction")
+    elif re.search(r"\b(cannot\s+keep\s+fluids\s+down|can't\s+keep\s+fluids\s+down|can't\s+drink|vomiting\s+fluids)\b", text):
+        facts["fluid_intake"] = PatientFact(value="no", confidence=0.95, source="rule_extraction")
+
+    # 9. Injury Time & Bleeding Amount
+    if re.search(r"\b(just\s+now|today|yesterday|hours\s+ago|mins\s+ago)\b", text):
+        facts["injury_time"] = PatientFact(value=re.search(r"\b(just\s+now|today|yesterday|hours\s+ago|mins\s+ago)\b", text).group(1), confidence=0.95, source="rule_extraction")
+
+    if re.search(r"\b(heavy|a\s+lot\s+of\s+bleeding|severe\s+bleeding|spotting|mild\s+bleeding)\b", text):
+        facts["bleeding_amount"] = PatientFact(value=re.search(r"\b(heavy|a\s+lot|severe|spotting|mild)\b", text).group(1), confidence=0.95, source="rule_extraction")
+
+    # 10. Pregnancy Weeks
+    preg_match = re.search(r"\b(\d+)\s*(?:weeks|months)\b", text)
+    if preg_match:
+        facts["pregnancy_weeks"] = PatientFact(value=preg_match.group(1), confidence=0.95, source="rule_extraction")
+
+    # 11. Medication Taken
+    if re.search(r"\b(took\s+medication|took\s+medicine|paracetamol|ibuprofen|advil|aspirin|tylenol|pill|took\s+pills|took\s+something)\b", text):
+        facts["medication_taken"] = PatientFact(value="yes", confidence=0.95, source="rule_extraction")
+    elif re.search(r"\b(no\s+medication|no\s+medicine|haven't\s+taken\s+anything|took\s+nothing|no\s+pills)\b", text):
+        facts["medication_taken"] = PatientFact(value="no", confidence=0.95, source="rule_extraction")
+
+    # 12. Symptom Progression
+    if re.search(r"\b(worse|getting\s+worse|worsened)\b", text):
+        facts["symptom_progression"] = PatientFact(value="worse", confidence=0.95, source="rule_extraction")
+    elif re.search(r"\b(better|getting\s+better|improved)\b", text):
+        facts["symptom_progression"] = PatientFact(value="better", confidence=0.95, source="rule_extraction")
+    elif re.search(r"\b(same|no\s+change|stayed\s+the\s+same)\b", text):
+        facts["symptom_progression"] = PatientFact(value="same", confidence=0.95, source="rule_extraction")
+
+    # 13. Consciousness Level & Severe Pain (Emergency)
+    if re.search(r"\b(alert|oriented|awake|conscious)\b", text):
+        facts["consciousness_level"] = PatientFact(value="alert", confidence=0.95, source="rule_extraction")
+    elif re.search(r"\b(confused|dizzy|sleepy|fainting|unresponsive|passing\s+out)\b", text):
+        facts["consciousness_level"] = PatientFact(value="impaired", confidence=0.95, source="rule_extraction")
+
+    if re.search(r"\b(severe\s+pain|unbearable\s+pain|worst\s+pain|very\s+painful|10/10\s+pain)\b", text):
+        facts["severe_pain"] = PatientFact(value="yes", confidence=0.95, source="rule_extraction")
 
     return facts
 
@@ -249,6 +376,11 @@ class ConversationStateManager:
         )
 
         self._store[conversation_id] = state
+
+        # Add debug logging showing collected_information
+        info_dict = {k: v.value for k, v in state.collected_information.items()}
+        logger.info(f"[DEBUG] Conversation {conversation_id} Turn {turn} collected_information: {info_dict}")
+
         return state
 
     def clear(self, conversation_id: str) -> None:

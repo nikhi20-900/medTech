@@ -2,6 +2,9 @@ from __future__ import annotations
 import ollama
 import asyncio
 import json
+import logging
+import time
+import traceback
 from collections.abc import AsyncIterator
 from uuid import uuid4
 
@@ -180,22 +183,25 @@ async def _stream_with_metadata(
         )
 
 
-async def _generate_ai_response(
+_OLLAMA_MODEL = "qwen3:4b"
+_OLLAMA_OPTIONS = {"temperature": 0.2, "top_p": 0.8}
+
+logger = logging.getLogger("medet.ollama")
+
+
+def _build_chat_messages(
     message: str,
     input_type: str,
     language: str,
-
     conversation_id: str,
-) -> tuple[str, list[dict[str, str] | str]]:
-    import logging
-    import traceback
+) -> list[dict[str, str]]:
+    """Run the full prompt pipeline and return the Ollama messages list.
 
-    logger = logging.getLogger("medet.ollama")
+    Pipeline: Conversation State → Symptom Classifier →
+    Response Policy → Prompt Builder → message construction.
 
-    logger.info("🔥 _generate_ai_response called | conv=%s lang=%s type=%s",
-                conversation_id, language, input_type)
-
-    # --- Step 1: Build the prompt context and validate ---
+    Raises MedetAPIError on validation failure.
+    """
     prompt_context = build_multilingual_prompt_context(
         message=message,
         language=language,
@@ -214,11 +220,9 @@ async def _generate_ai_response(
     system_instruction = f"{prompt_context.system_instruction}{extra_context}"
 
     logger.debug("system_instruction (%d chars): %.120s…",
-                 len(system_instruction),
-                 system_instruction)
+                 len(system_instruction), system_instruction)
     logger.debug("user_message (%d chars): %.120s…",
-                 len(prompt_context.user_message),
-                 prompt_context.user_message)
+                 len(prompt_context.user_message), prompt_context.user_message)
 
     if not prompt_context.system_instruction:
         raise MedetAPIError(
@@ -233,24 +237,36 @@ async def _generate_ai_response(
             status_code=400,
         )
 
-    # --- Step 2: Call Ollama with proper error handling ---
-    messages = [
+    return [
         {"role": "system", "content": system_instruction},
         {"role": "user", "content": prompt_context.user_message},
     ]
 
+
+async def _generate_ai_response(
+    message: str,
+    input_type: str,
+    language: str,
+    conversation_id: str,
+) -> tuple[str, list[dict[str, str] | str]]:
+    """Non-streaming Ollama call used by the /chat endpoint."""
+    logger.info("🔥 _generate_ai_response called | conv=%s lang=%s type=%s",
+                conversation_id, language, input_type)
+
+    messages = _build_chat_messages(message, input_type, language, conversation_id)
+
     try:
-        logger.info("Calling ollama.chat(model='qwen3:4b') …")
+        logger.info("Calling ollama.chat(model=%r) …", _OLLAMA_MODEL)
+        t0 = time.perf_counter()
         response = await asyncio.to_thread(
             ollama.chat,
-            model="qwen3:4b",
+            model=_OLLAMA_MODEL,
             messages=messages,
-    options={
-        "temperature": 0.2,
-        "top_p": 0.8,
-        },
+            options=_OLLAMA_OPTIONS,
         )
-        logger.info("Ollama response received (type=%s)", type(response).__name__)
+        elapsed = time.perf_counter() - t0
+        logger.info("Ollama response received in %.2fs (type=%s)",
+                    elapsed, type(response).__name__)
     except ConnectionError as exc:
         logger.error("Ollama connection failed:\n%s", traceback.format_exc())
         raise OllamaUnavailableError(
@@ -262,11 +278,8 @@ async def _generate_ai_response(
             f"Ollama error: {type(exc).__name__}: {exc}"
         ) from exc
 
-    # --- Step 3: Extract the answer safely ---
+    # Extract the answer safely
     try:
-        # Ollama SDK ≥0.4 returns a ChatResponse (Pydantic model with
-        # attribute access), but it also supports dict-style subscript
-        # via SubscriptableBaseModel.
         answer = response["message"]["content"]
     except (KeyError, TypeError, IndexError) as exc:
         logger.error("Unexpected Ollama response structure: %s\n%s",
@@ -287,7 +300,7 @@ async def _generate_ai_response(
 
     logger.info("✅ Ollama answer (%d chars): %.80s…", len(answer), answer)
     return (answer, [])
-    
+
 
 async def _stream_ai_response(
     message: str,
@@ -295,17 +308,78 @@ async def _stream_ai_response(
     language: str,
     conversation_id: str,
 ) -> AsyncIterator[dict[str, object]]:
-    """Placeholder adapter for the existing streaming generator."""
-    answer, sources = await _generate_ai_response(
-        message,
-        input_type,
-        language,
-        conversation_id,
+    """Native Ollama streaming — yields tokens as they arrive from the model.
+
+    Uses ollama.AsyncClient().chat(stream=True) to get true token-by-token
+    streaming instead of waiting for the full response.
+
+    Performance metrics (TTFT, total time, tokens/sec) are logged at the end.
+    """
+    logger.info("🔥 _stream_ai_response called | conv=%s lang=%s type=%s",
+                conversation_id, language, input_type)
+
+    chat_messages = _build_chat_messages(
+        message, input_type, language, conversation_id,
     )
-    for source in sources:
-        yield {"type": "source", "source": source}
-    for token in answer.split(" "):
-        yield {"type": "token", "content": token + " "}
+
+    # Performance counters
+    t_start = time.perf_counter()
+    t_first_token: float | None = None
+    token_count = 0
+
+    try:
+        logger.info("Calling ollama.AsyncClient().chat(model=%r, stream=True) …",
+                    _OLLAMA_MODEL)
+        client = ollama.AsyncClient()
+        stream = await client.chat(
+            model=_OLLAMA_MODEL,
+            messages=chat_messages,
+            stream=True,
+            options=_OLLAMA_OPTIONS,
+        )
+
+        async for chunk in stream:
+            # Extract the token from the streaming chunk
+            token = chunk["message"]["content"]
+            if not token:
+                continue
+
+            token_count += 1
+            if t_first_token is None:
+                t_first_token = time.perf_counter()
+                ttft = t_first_token - t_start
+                logger.info(
+                    "⚡ TTFT=%.3fs | conv=%s",
+                    ttft, conversation_id,
+                )
+
+            yield {"type": "token", "content": token}
+
+    except ConnectionError as exc:
+        logger.error("Ollama stream connection failed:\n%s",
+                     traceback.format_exc())
+        raise OllamaUnavailableError(
+            "Cannot reach Ollama. Is `ollama serve` running on localhost:11434?"
+        ) from exc
+    except Exception as exc:
+        logger.error("Ollama stream failed:\n%s", traceback.format_exc())
+        raise OllamaUnavailableError(
+            f"Ollama streaming error: {type(exc).__name__}: {exc}"
+        ) from exc
+
+    # Log performance summary
+    t_end = time.perf_counter()
+    total = t_end - t_start
+    tps = token_count / total if total > 0 else 0
+    logger.info(
+        "📊 stream_perf | conv=%s tokens=%d total=%.2fs "
+        "TTFT=%.3fs tok/s=%.1f",
+        conversation_id,
+        token_count,
+        total,
+        (t_first_token - t_start) if t_first_token else 0,
+        tps,
+    )
 
 
 def _conversation_id(payload: MedetChatRequest) -> str:

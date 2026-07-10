@@ -213,7 +213,7 @@ def build_policy_aware_prompt(
         parts.append(f"Still Missing:\n{missing_lines}\n")
 
     # Follow-up questions
-    questions = get_contextual_followups(state)
+    questions = get_contextual_followups(state, max_questions=policy_ctx.max_questions)
     if questions:
         question_lines = "\n".join(
             f"{i + 1}. {q}" for i, q in enumerate(questions)
